@@ -17,13 +17,18 @@ const tokensOf = (text: string): string[] | undefined => {
 
 const evaluate = (tokens: string[]): number => {
   let at = 0;
+  let percentage = false;
   const peek = () => tokens[at];
   const take = () => tokens[at++];
 
   const sum = (): number => {
     let value = product();
     while (peek() === "+" || peek() === "-") {
-      value = take() === "+" ? value + product() : value - product();
+      const adds = take() === "+";
+      percentage = false;
+      const term = product();
+      const change = percentage ? value * term : term;
+      value = adds ? value + change : value - change;
     }
     return value;
   };
@@ -35,9 +40,11 @@ const evaluate = (tokens: string[]): number => {
       if (op === "*" || op === "×" || op === "x") {
         take();
         value *= unary();
+        percentage = false;
       } else if (op === "/" || op === "÷") {
         take();
         value /= unary();
+        percentage = false;
       } else {
         return value;
       }
@@ -57,6 +64,7 @@ const evaluate = (tokens: string[]): number => {
     while (peek() === "%") {
       take();
       value /= 100;
+      percentage = true;
     }
     return value;
   };
@@ -75,7 +83,7 @@ const evaluate = (tokens: string[]): number => {
 };
 
 export function calculate(text: string): string | undefined {
-  if (text.length > LONGEST || /0x/i.test(text)) {
+  if (text.length > LONGEST || /0x/i.test(text) || /^\d+([-/.]\d+)+$/.test(text.trim())) {
     return undefined;
   }
   const tokens = tokensOf(text);
@@ -86,8 +94,8 @@ export function calculate(text: string): string | undefined {
     return undefined;
   }
   const value = evaluate(tokens);
-  if (!Number.isFinite(value)) {
+  if (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) {
     return undefined;
   }
-  return Number.isInteger(value) ? String(value) : String(Number(value.toPrecision(12)));
+  return String(Number(value.toPrecision(15)));
 }

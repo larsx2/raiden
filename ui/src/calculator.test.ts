@@ -18,6 +18,12 @@ describe("calculate", () => {
     expect(calculate(".5*2")).toBe("1");
     expect(calculate("-2 * 3")).toBe("-6");
     expect(calculate("2^40+1")).toBe("1099511627777");
+    expect(calculate("1000000000000.5+1")).toBe("1000000000001.5");
+    expect(calculate("100 + 10%")).toBe("110");
+    expect(calculate("80 - 25%")).toBe("60");
+    expect(calculate("10% + 5")).toBe("5.1");
+    expect(calculate("4 - 2 * 10%")).toBe("3.8");
+    expect(calculate("12 - 3")).toBe("9");
   });
 
   it("stays quiet for anything that is not arithmetic", () => {
@@ -37,6 +43,10 @@ describe("calculate", () => {
       "--2",
       "-(2)",
       "0x10",
+      "2024-01-01",
+      "555-1234",
+      "11/27",
+      "2^70",
       "-".repeat(20000) + "1",
     ]) {
       expect(calculate(text)).toBeUndefined();
