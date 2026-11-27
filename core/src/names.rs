@@ -7,11 +7,13 @@ use std::time::SystemTime;
 use memchr::memmem;
 
 use crate::files;
+use unicode_normalization::UnicodeNormalization;
 
 const NONE: u32 = u32::MAX;
 const MAGIC: &[u8; 8] = b"RAIDENNM";
 const VERSION: u32 = 4;
 const SEPARATOR: u8 = b'/';
+const NEVER_INDEX: &str = ".metadata_never_index";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
@@ -87,6 +89,7 @@ struct Compared {
     on_disk: Option<Vec<Tree>>,
     anew: bool,
     foreign: bool,
+    local: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -315,6 +318,11 @@ impl Names {
     fn child(&self, folder: u32, name: &str) -> Option<u32> {
         self.children(folder)
             .find(|child| self.name(*child) == name)
+            .or_else(|| {
+                let wanted = loosely(name);
+                self.children(folder)
+                    .find(|child| loosely(self.name(*child)) == wanted)
+            })
     }
 
     fn locate(&self, path: &Path) -> u32 {
@@ -343,11 +351,22 @@ impl Names {
     }
 
     fn on_disk(&self, id: u32) -> u32 {
-        let mut at = id;
-        while self.kind(at) != Kind::Root && !still_a_folder(&self.path(at)) {
-            at = self.parent[at as usize];
+        let mut chain = vec![id];
+        while let Some(&last) = chain.last() {
+            if self.kind(last) == Kind::Root {
+                break;
+            }
+            chain.push(self.parent[last as usize]);
         }
-        at
+        chain.reverse();
+        let mut kept = chain[0];
+        for at in chain.into_iter().skip(1) {
+            if !still_a_folder(&self.path(at)) {
+                break;
+            }
+            kept = at;
+        }
+        kept
     }
 
     fn now_foreign(&self, folder: u32) -> bool {
@@ -370,6 +389,17 @@ impl Names {
         let mut compared = Vec::new();
         let mut waiting = vec![first];
         while let Some(folder) = waiting.pop() {
+            if self.flags[folder as usize] & FOREIGN != 0
+                && self.alive(folder)
+                && !self.now_foreign(folder)
+                && still_a_folder(&self.path(folder))
+            {
+                let mut again = self.compare(folder);
+                again.anew = true;
+                again.local = true;
+                compared.push(again);
+                continue;
+            }
             if !self.opens(folder) {
                 continue;
             }
@@ -379,6 +409,7 @@ impl Names {
                     on_disk: Some(Vec::new()),
                     anew: true,
                     foreign: true,
+                    local: false,
                 });
                 continue;
             }
@@ -418,6 +449,7 @@ impl Names {
                 on_disk: None,
                 anew: false,
                 foreign: false,
+                local: false,
             };
         };
         let known: HashSet<Listed> = if anew {
@@ -443,6 +475,7 @@ impl Names {
             on_disk: Some(on_disk),
             anew,
             foreign: false,
+            local: false,
         }
     }
 
@@ -462,6 +495,7 @@ impl Names {
             on_disk,
             anew,
             foreign,
+            local,
         } in changes.0
         {
             if !self.alive(folder) {
@@ -470,6 +504,10 @@ impl Names {
             if foreign {
                 changed |= self.flags[folder as usize] & FOREIGN == 0;
                 self.flags[folder as usize] |= FOREIGN;
+            }
+            if local {
+                self.flags[folder as usize] &= !FOREIGN;
+                changed = true;
             }
             match on_disk {
                 Some(on_disk) => {
@@ -758,6 +796,9 @@ fn listing(folder: &Path, at_home: bool, device: u64) -> Option<Vec<Listed>> {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
+        if name == NEVER_INDEX {
+            return Some(Vec::new());
+        }
         if !files::listed(&name, at_home) {
             continue;
         }
@@ -785,6 +826,10 @@ fn listing(folder: &Path, at_home: bool, device: u64) -> Option<Vec<Listed>> {
         });
     }
     Some(listed)
+}
+
+fn loosely(name: &str) -> String {
+    name.nfc().flat_map(char::to_lowercase).collect()
 }
 
 fn still_a_folder(path: &str) -> bool {
@@ -1170,6 +1215,61 @@ mod tests {
         let work = names.search("work", 10, &[]);
         assert_eq!(work.len(), 1);
         assert!(!work[0].is_file);
+    }
+
+    #[test]
+    fn folders_spotlight_is_told_to_skip_are_not_read() {
+        let home = Home::new("never-index");
+        home.file("Taxes.noindex/2026-return.pdf");
+        home.file("Private/.metadata_never_index");
+        home.file("Private/medical.pdf");
+        home.file("Code/visible.rs");
+        let names = Names::build(home.path());
+        assert!(found(&names, "2026-return").is_empty());
+        assert!(found(&names, "medical").is_empty());
+        assert_eq!(found(&names, "visible"), ["Code/visible.rs"]);
+    }
+
+    #[test]
+    fn a_folder_comes_back_whole_after_the_volume_over_it_is_unmounted() {
+        let home = Home::new("unmounted");
+        home.file("Shares/team/old-local.txt");
+        let mut names = Names::build(home.path());
+        let team = home.0.join("Shares/team");
+        let scratch = std::env::temp_dir().join(format!("raiden-unmount-{}", std::process::id()));
+        let Some(volume) = mount_volume(&team, &scratch) else {
+            eprintln!("hdiutil could not mount a test volume here, so this check cannot run.");
+            return;
+        };
+        names.refresh(&team, None);
+        assert!(found(&names, "old-local").is_empty());
+        drop(volume);
+        let _ = fs::remove_file(scratch.with_extension("dmg"));
+        names.refresh(&team, None);
+        assert_eq!(found(&names, "old-local"), ["Shares/team/old-local.txt"]);
+    }
+
+    #[test]
+    fn a_change_below_a_folder_replaced_by_a_link_is_never_read_through_it() {
+        let home = Home::new("link-ancestor");
+        home.file("Work/sub/mine.txt");
+        home.file("Elsewhere/sub/theirs.txt");
+        let mut names = Names::build(home.path());
+        fs::remove_dir_all(home.0.join("Work")).unwrap();
+        std::os::unix::fs::symlink(home.0.join("Elsewhere"), home.0.join("Work")).unwrap();
+        names.refresh(&home.0.join("Work/sub"), None);
+        assert_eq!(found(&names, "theirs"), ["Elsewhere/sub/theirs.txt"]);
+        assert!(found(&names, "mine").is_empty());
+    }
+
+    #[test]
+    fn an_event_path_in_another_case_still_finds_its_folder() {
+        let home = Home::new("case");
+        home.file("Code/old.rs");
+        let mut names = Names::build(home.path());
+        home.file("Code/Deep/new.rs");
+        names.refresh(&home.0.join("code/deep"), None);
+        assert_eq!(found(&names, "new.rs"), ["Code/Deep/new.rs"]);
     }
 
     #[test]

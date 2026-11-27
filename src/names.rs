@@ -81,9 +81,12 @@ pub struct Lookup {
 impl Index {
     pub fn search(&self, query: &str, most: usize) -> Option<Lookup> {
         let names = self.0.read().unwrap_or_else(PoisonError::into_inner);
-        names.as_ref().map(|names| Lookup {
-            hits: names.search(query, most, &names.blocked()),
-            blocked: protected_blocked(names),
+        names.as_ref().map(|names| {
+            let blocked = names.blocked();
+            Lookup {
+                hits: names.search(query, most, &blocked),
+                blocked: protected_among(names.home(), blocked),
+            }
         })
     }
 
@@ -150,10 +153,9 @@ fn protected(home: &str) -> Vec<String> {
     folders
 }
 
-fn protected_blocked(names: &Names) -> Vec<String> {
-    let roots = protected(names.home());
-    names
-        .blocked()
+fn protected_among(home: &str, blocked: Vec<String>) -> Vec<String> {
+    let roots = protected(home);
+    blocked
         .into_iter()
         .filter(|folder| {
             roots.iter().any(|root| {
@@ -173,7 +175,10 @@ fn read(from: &Path, home: &str, history: &str) -> Option<(Names, Stamp)> {
         && stamp.history == history
         && stamp.home > 0
         && stamp.drive > 0
-        && stamp.at > 0;
+        && stamp.at > 0
+        && SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(stamp.at))
+            .is_some_and(|at| at <= SystemTime::now() + Duration::from_secs(86_400));
     current.then_some((names, stamp))
 }
 
@@ -265,24 +270,12 @@ fn merged(
             (known, new) => known.or(new),
         };
     }
-    let deep: Vec<PathBuf> = wanted
-        .iter()
-        .filter(|(_, deep)| deep.is_some())
-        .map(|(path, _)| path.clone())
-        .collect();
-    wanted
-        .into_iter()
-        .filter(|(path, _)| {
-            !path
-                .ancestors()
-                .skip(1)
-                .any(|above| deep.iter().any(|covering| covering == above))
-        })
-        .collect()
+    wanted.into_iter().collect()
 }
 
 impl Watch {
     fn took_in(&mut self, root: Root, events: &[(String, u32, u64)]) {
+        let heard_at = SystemTime::now();
         let settled = if self.replaying[root.at()] {
             SystemTime::UNIX_EPOCH + Duration::from_secs(self.stamp.at)
         } else {
@@ -308,7 +301,7 @@ impl Watch {
         for (path, deep) in merged(events, &self.home, &root_path, lost_since) {
             self.changed |= self.index.refresh(&path, deep);
         }
-        self.heard_at[root.at()] = SystemTime::now();
+        self.heard_at[root.at()] = heard_at;
         if self.changed && self.saved_at.elapsed() >= SAVED_AT_MOST_EVERY {
             self.save();
         }
@@ -353,8 +346,13 @@ extern "C" fn heard(
     watch.took_in(root, &events);
 }
 
+fn under(path: &str, folder: &str) -> bool {
+    path.strip_prefix(folder)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
 fn watched(path: &str, home: &str) -> bool {
-    path.starts_with(&files::icloud_drive(home))
+    under(path, &files::icloud_drive(home))
         || path
             .strip_prefix(home)
             .filter(|rest| rest.is_empty() || rest.starts_with('/'))
@@ -475,7 +473,9 @@ fn keep_current(index: &Arc<Index>, home: &str, saved_to: PathBuf) {
             stamp
         }
     };
-    let heard_at = SystemTime::UNIX_EPOCH + Duration::from_secs(stamp.at);
+    let heard_at = SystemTime::UNIX_EPOCH
+        .checked_add(Duration::from_secs(stamp.at))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
     follow(Watch {
         index: Arc::clone(index),
         home: home.to_owned(),
@@ -532,6 +532,7 @@ mod tests {
             "/Users/me/Applications/x",
             "/Users/me/Library/Mobile Documents/com~apple~Pages",
             "/Users/meg/Documents",
+            "/Users/me/Library/Mobile Documents/com~apple~CloudDocsOld/x",
         ] {
             assert!(!watched(ignored, home), "{ignored}");
         }
@@ -759,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn a_batch_refreshes_each_folder_once_and_skips_what_a_deep_check_covers() {
+    fn a_batch_refreshes_each_folder_once_and_keeps_folders_reported_beside_a_deep_check() {
         let lost = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let events = [
             ("/Users/me/Downloads".to_owned(), 0, 1),
@@ -776,6 +777,8 @@ mod tests {
             wanted,
             [
                 (PathBuf::from("/Users/me/Code"), Some(lost)),
+                (PathBuf::from("/Users/me/Code/app"), None),
+                (PathBuf::from("/Users/me/Code/app/src"), None),
                 (PathBuf::from("/Users/me/Downloads"), None),
             ]
         );
@@ -907,7 +910,7 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         assert_eq!(
-            protected_blocked(&names),
+            protected_among(names.home(), names.blocked()),
             [format!("{home}/Documents/Taxes")]
         );
     }
@@ -990,5 +993,42 @@ mod tests {
         std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(found.hits.is_empty());
         assert!(found.blocked.is_empty());
+    }
+
+    #[test]
+    fn a_folder_restored_with_an_old_date_is_read_when_reported_beside_a_deep_check() {
+        let scratch = Scratch::new("restored");
+        scratch.file("Code/app/src/old.rs");
+        let home = scratch.home();
+        let mut watch = watch(&home);
+        watch.index.set(Some(Names::build(&home)));
+        scratch.file("Code/app/src/restored.rs");
+        let src = scratch.0.join("home/Code/app/src");
+        let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        File::open(&src).unwrap().set_modified(long_ago).unwrap();
+        watch.took_in(
+            Root::Home,
+            &[
+                (src.to_str().unwrap().to_owned(), 0, 10),
+                (format!("{home}/Code"), MUST_SCAN_SUBDIRS, 11),
+            ],
+        );
+        let found = watch.index.search("restored", 10).unwrap();
+        assert_eq!(found.hits.len(), 1);
+    }
+
+    #[test]
+    fn a_saved_index_dated_in_the_far_future_is_never_used() {
+        let scratch = Scratch::new("future");
+        let home = scratch.home();
+        let saved = scratch.state().join("names.idx");
+        let stamp = Stamp {
+            home: 1,
+            drive: 1,
+            at: u64::MAX,
+            history: "A".to_owned(),
+        };
+        write(&Names::build(&home), &stamp, &saved).unwrap();
+        assert!(read(&saved, &home, "A").is_none());
     }
 }

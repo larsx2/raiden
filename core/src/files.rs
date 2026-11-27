@@ -121,9 +121,10 @@ pub fn listed(name: &str, at_home: bool) -> bool {
 /// assert!(opened("src"));
 /// assert!(!opened("node_modules"));
 /// assert!(!opened("Raiden.app"));
+/// assert!(!opened("Private.noindex"));
 /// ```
 pub fn opened(folder: &str) -> bool {
-    !NOISE.contains(&folder) && !is_package(folder)
+    !NOISE.contains(&folder) && !is_package(folder) && !folder.ends_with(".noindex")
 }
 
 pub fn icloud_drive(home: &str) -> String {

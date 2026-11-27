@@ -668,7 +668,7 @@ mod tests {
             }
         }
         let took = started.elapsed();
-        assert!(found, "{} was not found within 2 s", file.display());
+        assert!(found, "{} was not found within {allowed:?}", file.display());
         eprintln!("found {} in {took:?}", file.display());
     }
 
