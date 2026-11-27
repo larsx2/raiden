@@ -223,7 +223,9 @@ how much memory it uses at rest, against its limits.
 ## Contributing
 
 Bugs, ideas and questions are welcome in [Issues](https://github.com/larsx2/raiden/issues), and
-pull requests too: [CONTRIBUTING.md](CONTRIBUTING.md) explains how changes are made.
+pull requests too: [CONTRIBUTING.md](CONTRIBUTING.md) explains how changes are made. Everyone
+taking part follows the [code of conduct](CODE_OF_CONDUCT.md), and security problems are reported
+privately, as [SECURITY.md](SECURITY.md) explains.
 
 ## License
 

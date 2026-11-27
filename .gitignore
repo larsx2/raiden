@@ -10,3 +10,4 @@ ui/src/generated/
 test-results/
 playwright-report/
 .worktrees/
+CLAUDE.local.md
