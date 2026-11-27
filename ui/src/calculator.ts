@@ -95,7 +95,8 @@ const roughly = (number: number, digits: number): Value => {
 
 const raise = (base: Value, power: Value): Value => {
   const times = absolute(power.n);
-  if (power.d === 1n && BigInt(bits(base.n) + bits(base.d)) * times <= BigInt(MOST_BITS)) {
+  const wholePower = power.d === 1n && power.digits === Infinity;
+  if (wholePower && BigInt(bits(base.n) + bits(base.d)) * times <= BigInt(MOST_BITS)) {
     const raised = value(
       base.n ** times,
       base.d ** times,
@@ -105,8 +106,13 @@ const raise = (base: Value, power: Value): Value => {
   }
   const x = Number(base.n) / Number(base.d);
   const y = Number(power.n) / Number(power.d);
-  const growth = Math.max(0, Math.log10(Math.abs(y * Math.log(Math.abs(x)))));
-  return roughly(x ** y, Math.min(base.digits, power.digits, DOUBLE_DIGITS) - growth);
+  const result = x ** y;
+  if ((x < 0 && !Number.isSafeInteger(y)) || (result === 0 && x !== 0)) {
+    return fail();
+  }
+  const spread = x === 0 ? 0 : Math.abs(y) * (1 + Math.abs(Math.log(Math.abs(x))));
+  const growth = Math.max(0, Math.log10(spread));
+  return roughly(result, Math.min(base.digits, power.digits, DOUBLE_DIGITS) - growth);
 };
 
 const evaluate = (tokens: string[]): Value => {
