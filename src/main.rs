@@ -15,6 +15,7 @@ mod memory;
 mod paste;
 mod picks;
 mod pulls;
+mod quick_look;
 mod settings;
 mod sizes;
 mod spotlight;
@@ -185,6 +186,20 @@ pub fn hide_panel(app: &AppHandle) {
     });
 }
 
+fn lost_focus(app: &AppHandle) {
+    on_main_thread(app, |app| {
+        let Ok(panel) = app.get_webview_panel(PANEL) else {
+            return;
+        };
+        if quick_look::keeps_raiden_up(panel.as_panel()) {
+            panel.make_key_window();
+        } else {
+            panel.hide();
+            mark_hidden(app);
+        }
+    });
+}
+
 #[tauri::command]
 fn hide(app: AppHandle) {
     hide_panel(&app);
@@ -193,6 +208,8 @@ fn hide(app: AppHandle) {
 pub struct HiddenSince(pub Mutex<Instant>);
 
 pub fn mark_hidden(app: &AppHandle) {
+    quick_look::close();
+    quick_look::tell("hidden");
     settings::stop_recording(app);
     typeahead::release();
     ai::rest_later(app);
@@ -439,6 +456,8 @@ fn launch(rows: Option<usize>, development: bool) {
             actions::open_file,
             actions::copy_path,
             actions::show_in_finder,
+            actions::quick_look,
+            actions::close_quick_look,
             actions::copy_text,
             actions::open_link,
             front::front_context,
@@ -490,7 +509,7 @@ fn launch(rows: Option<usize>, development: bool) {
             panel::make(
                 app.handle(),
                 raiden_core::window_title(development),
-                move || hide_panel(&handle),
+                move || lost_focus(&handle),
             )?;
             place(app.handle());
             settings::start(app.handle(), development);

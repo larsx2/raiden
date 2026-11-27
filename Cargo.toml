@@ -21,10 +21,11 @@ foreign-types = "0.5"
 libc = "0.2"
 objc2 = "0.6"
 block2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSBitmapImageRep", "NSColor", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSPasteboard", "NSPasteboardItem", "NSRunningApplication", "NSScreen", "NSWindow", "NSWorkspace"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSBitmapImageRep", "NSColor", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSScreen", "NSWindow", "NSWorkspace"] }
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSNotification", "NSOperation", "NSString", "NSURL"] }
 objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 objc2-core-graphics = { version = "0.3", features = ["CGImage"] }
+objc2-quick-look-ui = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "QLPreviewItem", "QLPreviewPanel"] }
 base64 = "0.22"
 serde = "1"
 agent-client-protocol = "=5.2.0"
