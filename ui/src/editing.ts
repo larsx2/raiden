@@ -22,6 +22,8 @@ const WANTS_CHAR = new Set([...FINDS, "r"]);
 const OBJECTS = new Set(["i", "a"]);
 const UNDO_LIMIT = 100;
 const COUNT_LIMIT = 999;
+const TEXT_LIMIT = 20_000;
+const KEYS: Record<string, string> = { ArrowLeft: "h", ArrowRight: "l", Home: "0", End: "$" };
 
 export const freshEditor = (): Editor => ({ keys: [], register: "", undo: [] });
 
@@ -330,7 +332,7 @@ export function tokenOf(keys: string[], event: Keystroke): string | undefined {
   if (wantsChar(keys)) {
     return [...event.key].length === 1 ? event.key : undefined;
   }
-  const letter = vimLetter(event);
+  const letter = KEYS[event.key] ?? vimLetter(event);
   return [...letter].length === 1 ? letter : undefined;
 }
 
@@ -343,6 +345,9 @@ function operate(editor: Editor, line: Line, operator: string, range: Range): Ed
   const { text } = line;
   const taken = text.slice(range.from, range.to);
   if (operator === "y") {
+    if (taken === "") {
+      return { editor, line: { text, at: rest(text, line.at) }, insert: false };
+    }
     return {
       editor: { ...editor, register: taken },
       line: { text, at: rest(text, range.from) },
@@ -432,6 +437,9 @@ function paste(editor: Editor, line: Line, count: number, later: boolean): Edite
   }
   const { text, at } = line;
   const spot = later && text !== "" ? after(text, at) : at;
+  if (text.length + editor.register.length * count > TEXT_LIMIT) {
+    return undefined;
+  }
   const pasted = editor.register.repeat(count);
   const next = text.slice(0, spot) + pasted + text.slice(spot);
   return {

@@ -110,6 +110,8 @@ describe("changing the question", () => {
     expect(shown(type("ab", 0, "yy$p"))).toBe("aba|b");
     expect(shown(type("ab", 0, "p"))).toBe("|ab");
     expect(shown(type("hello world", 6, "yy"))).toBe("hello |world");
+    expect(shown(type("one two", 0, "yiwyhp"))).toBe("oon|ene two");
+    expect(type("x".repeat(30), 0, "yy999p").line.text.length).toBe(30);
   });
 
   it("u undoes the last change, one at a time", () => {
@@ -168,6 +170,8 @@ describe("keys left for the screen", () => {
     expect(tokenOf(["f"], { key: "é", code: "Digit2" })).toBe("é");
     expect(tokenOf([], { key: "х", code: "KeyX" })).toBe("x");
     expect(tokenOf([], { key: "Enter" })).toBeUndefined();
+    expect(tokenOf([], { key: "ArrowLeft" })).toBe("h");
+    expect(tokenOf([], { key: "End" })).toBe("$");
   });
 
   it("emoji, flags and accented letters count as one character", () => {
