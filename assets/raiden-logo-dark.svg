@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">RAIDEN</title>
+  <desc id="desc">Split lightning symbol above the uppercase RAIDEN wordmark.</desc>
+  <g fill="#FFFFFF" transform="translate(-0.5 3.5)">
+  <g id="symbol" transform="translate(-6 0)">
+    <path d="M343 101 L165 252.5 H245 Z"/>
+    <path d="M193 349 L281 217.5 H360 Z"/>
+  </g>
+  <g id="wordmark" fill-rule="evenodd">
+    <path id="letter-r" d="M116 372 H141 C149.5 372 154 376 154 382.7 C154 388 150.8 391.5 145.5 393 L154 404 H143 L133.8 393.6 H125.8 V404 H116 Z M125.8 379 V387 H139 C142.5 387 144.5 385.7 144.5 383 C144.5 380.4 142.5 379 139 379 Z"/>
+    <path id="letter-a" d="M183.2 372 H195.2 L212 404 H201.8 L198.5 397.5 H179.8 L176.5 404 H166.5 Z M189.2 380 L183 391 H195.4 Z"/>
+    <path id="letter-i" d="M225 372 H235 V404 H225 Z"/>
+    <path id="letter-d" d="M253 372 H273.7 C286.5 372 294 377.9 294 388 C294 398.1 286.5 404 273.7 404 H253 Z M262.5 379.2 V396.8 H273.2 C280.4 396.8 284 393.7 284 388 C284 382.3 280.4 379.2 273.2 379.2 Z"/>
+    <path id="letter-e" d="M308.5 372 H340 V379 H318 V384.5 H336 V391 H318 V397 H340 V404 H308.5 Z"/>
+    <path id="letter-n" d="M357 372 H366.6 L387.3 391.2 V372 H397 V404 H387.4 L366.7 384.8 V404 H357 Z"/>
+  </g>
+  </g>
+</svg>

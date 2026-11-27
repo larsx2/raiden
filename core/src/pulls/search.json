@@ -1,0 +1,151 @@
+{
+  "data": {
+    "search": {
+      "pageInfo": { "hasNextPage": true, "endCursor": "Y3Vyc29yOjQw" },
+      "nodes": [
+        {
+          "number": 169,
+          "title": "Add a retry budget to the sync worker",
+          "url": "https://github.com/fernhill/beacon/pull/169",
+          "isDraft": false,
+          "updatedAt": "2026-11-24T10:00:00Z",
+          "headRefName": "retry-budget",
+          "baseRefName": "main",
+          "additions": 228,
+          "deletions": 45,
+          "changedFiles": 27,
+          "mergeable": "MERGEABLE",
+          "repository": { "name": "beacon", "owner": { "login": "fernhill" } },
+          "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+            "state": "FAILURE",
+            "contexts": {
+              "checkRunCountsByState": [
+                { "state": "FAILURE", "count": 2 },
+                { "state": "SUCCESS", "count": 2 },
+                { "state": "IN_PROGRESS", "count": 0 }
+              ],
+              "statusContextCountsByState": [
+                { "state": "SUCCESS", "count": 0 },
+                { "state": "PENDING", "count": 1 }
+              ],
+              "nodes": [
+                { "__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE" },
+                { "__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "SUCCESS" },
+                { "__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "SUCCESS" },
+                { "__typename": "CheckRun", "name": "e2e", "status": "COMPLETED", "conclusion": "TIMED_OUT" },
+                { "__typename": "StatusContext", "context": "preview/deploy", "state": "PENDING" }
+              ]
+            }
+          } } } ] }
+        },
+        {
+          "number": 12,
+          "title": "Draft the release notes page",
+          "url": "https://github.com/larsx2/notebook/pull/12",
+          "isDraft": true,
+          "updatedAt": "2026-11-23T09:30:00Z",
+          "headRefName": "notes",
+          "baseRefName": "main",
+          "additions": 14,
+          "deletions": 0,
+          "changedFiles": 1,
+          "mergeable": "MERGEABLE",
+          "repository": { "name": "notebook", "owner": { "login": "larsx2" } },
+          "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+            "state": "ERROR",
+            "contexts": {
+              "checkRunCountsByState": [],
+              "statusContextCountsByState": [ { "state": "ERROR", "count": 1 } ],
+              "nodes": [ { "__typename": "StatusContext", "context": "ci/legacy", "state": "ERROR" } ]
+            }
+          } } } ] }
+        },
+        {
+          "number": 41,
+          "title": "Move the lantern settings to one file",
+          "url": "https://github.com/tidewater/lantern/pull/41",
+          "isDraft": false,
+          "updatedAt": "2026-11-25T08:00:00Z",
+          "headRefName": "one-settings-file",
+          "baseRefName": "develop",
+          "additions": 80,
+          "deletions": 120,
+          "changedFiles": 6,
+          "mergeable": "CONFLICTING",
+          "repository": { "name": "lantern", "owner": { "login": "tidewater" } },
+          "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+            "state": "SUCCESS",
+            "contexts": {
+              "checkRunCountsByState": [ { "state": "SUCCESS", "count": 3 } ],
+              "statusContextCountsByState": [ { "state": "SUCCESS", "count": 1 } ],
+              "nodes": []
+            }
+          } } } ] }
+        },
+        {
+          "number": 7,
+          "title": "Bump the font loader",
+          "url": "https://github.com/kestrel-io/site/pull/7",
+          "isDraft": false,
+          "updatedAt": "2026-11-20T12:00:00Z",
+          "headRefName": "fonts",
+          "baseRefName": "main",
+          "additions": 2,
+          "deletions": 2,
+          "changedFiles": 1,
+          "mergeable": "UNKNOWN",
+          "repository": { "name": "site", "owner": { "login": "kestrel-io" } },
+          "commits": { "nodes": [ { "commit": { "statusCheckRollup": null } } ] }
+        },
+        {
+          "number": 170,
+          "title": "Show sync progress in the menu bar",
+          "url": "https://github.com/fernhill/beacon/pull/170",
+          "isDraft": false,
+          "updatedAt": "2026-11-24T12:00:00Z",
+          "headRefName": "progress",
+          "baseRefName": "main",
+          "additions": 60,
+          "deletions": 8,
+          "changedFiles": 4,
+          "mergeable": "MERGEABLE",
+          "repository": { "name": "beacon", "owner": { "login": "fernhill" } },
+          "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+            "state": "PENDING",
+            "contexts": {
+              "checkRunCountsByState": [ { "state": "QUEUED", "count": 1 }, { "state": "IN_PROGRESS", "count": 1 } ],
+              "statusContextCountsByState": [],
+              "nodes": [
+                { "__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS", "conclusion": null },
+                { "__typename": "CheckRun", "name": "build", "status": "QUEUED", "conclusion": null }
+              ]
+            }
+          } } } ] }
+        },
+        {
+          "number": 88,
+          "title": "Cache the ledger totals",
+          "url": "https://github.com/fernhill/ledger/pull/88",
+          "isDraft": false,
+          "updatedAt": "2026-11-25T11:00:00Z",
+          "headRefName": "totals-cache",
+          "baseRefName": "main",
+          "additions": 40,
+          "deletions": 12,
+          "changedFiles": 3,
+          "mergeable": "MERGEABLE",
+          "repository": { "name": "ledger", "owner": { "login": "fernhill" } },
+          "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+            "state": "SUCCESS",
+            "contexts": {
+              "checkRunCountsByState": [ { "state": "SUCCESS", "count": 2 }, { "state": "SKIPPED", "count": 1 } ],
+              "statusContextCountsByState": [],
+              "nodes": []
+            }
+          } } } ] }
+        },
+        {}
+      ]
+    }
+  }
+}

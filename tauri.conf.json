@@ -1,0 +1,60 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Raiden",
+  "mainBinaryName": "Raiden",
+  "identifier": "com.larsx2.raiden",
+  "build": {
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "ui/dist",
+    "beforeDevCommand": {
+      "script": "node scripts/wasm.mjs && node_modules/.bin/vite",
+      "cwd": "ui"
+    },
+    "beforeBuildCommand": {
+      "script": "node scripts/wasm.mjs && node_modules/.bin/vite build",
+      "cwd": "ui"
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Raiden",
+        "width": 720,
+        "height": 452,
+        "resizable": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "skipTaskbar": true,
+        "windowEffects": {
+          "effects": [
+            "popover"
+          ],
+          "state": "active",
+          "radius": 18
+        }
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:"
+    },
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "signingIdentity": "Raiden Local",
+      "files": {
+        "Library/LaunchAgents/com.larsx2.raiden.plist": "launch-agent.plist"
+      }
+    }
+  }
+}

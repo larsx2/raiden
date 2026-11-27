@@ -1,0 +1,75 @@
+{
+  "question": "How do I land a change?",
+  "account": "claude",
+  "front": {
+    "app": "Zed",
+    "path": "/Applications/Zed.app",
+    "window": "AGENTS.md",
+    "selection": null
+  },
+  "events": {
+    "model": "haiku",
+    "hidden": {
+      "openai_api_key": 1
+    },
+    "deltas": [
+      "Run `just land`",
+      " from your",
+      " worktree.",
+      " It rebases",
+      " your commits on",
+      " main and",
+      " pushes them, and",
+      " the push hook runs",
+      " `just ci` on **exactly**",
+      " what is pushed.",
+      "\n\n```sh\ngit fetch",
+      " origin main\njust",
+      " land\n```\n\n",
+      "If another change",
+      " landed first, it:\n\n",
+      "- rebases and tries",
+      " again by itself\n",
+      "- stops after the",
+      " *same* reason three",
+      " times, so read its",
+      " message first\n\n",
+      "See [just's manual](https://just.systems/man/en/)",
+      " for more."
+    ]
+  },
+  "streaming": 6,
+  "followUp": {
+    "question": "Where does the push hook come from?",
+    "deltas": [
+      "`just setup`",
+      " installs it",
+      " in your worktree.",
+      " It runs `just ci`",
+      " on what is pushed,",
+      " so a push leaves",
+      " only when the",
+      " checks pass. It is",
+      " set in `scripts/tools.py`:\n\n",
+      "```python\ndef install",
+      "_hooks(root: Path)",
+      " -> None:\n    #",
+      " git runs the hooks",
+      " kept in the repo\n",
+      "    hooks = root /",
+      " \"scripts\" / \"hooks\"\n",
+      "    run([\"git\", \"config\",",
+      " \"core.hooksPath\",",
+      " str(hooks)], timeout",
+      "=30)\n```"
+    ]
+  },
+  "shown": {
+    "icon": "zed",
+    "tags": ["AGENTS.md in Zed"],
+    "hidden": "1 API key hidden",
+    "model": "Claude Haiku",
+    "account": "Claude",
+    "app": "Zed"
+  }
+}

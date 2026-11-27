@@ -1,0 +1,82 @@
+[tools]
+rust = { version = "1.100", components = "clippy,rustfmt", targets = "wasm32-unknown-unknown" }
+node = "26"
+pnpm = "12.22.0"
+
+[tasks.setup]
+description = "Install the dependencies and the git hooks"
+run = [
+  "pnpm install --frozen-lockfile",
+  "git config core.hooksPath .githooks",
+]
+
+[tasks.dev]
+description = "Run Raiden from source with live reload"
+depends = ["setup"]
+run = "ui/node_modules/.bin/tauri dev"
+
+[tasks.bundle]
+description = "Build Raiden.app"
+depends = ["setup"]
+run = [
+  "sh scripts/signing-identity.sh",
+  "ui/node_modules/.bin/tauri build --bundles app",
+]
+
+[tasks.install]
+description = "Build Raiden.app, put it in ~/Applications and start it"
+depends = ["bundle"]
+run = """
+set -eu
+built="${CARGO_TARGET_DIR:-target}/release/bundle/macos/Raiden.app"
+apps="$HOME/Applications"
+mkdir -p "$apps" "$HOME/.local/bin"
+rm -rf "$apps/.Raiden.app.installing"
+ditto "$built" "$apps/.Raiden.app.installing"
+rm -rf "$apps/Raiden.app"
+mv "$apps/.Raiden.app.installing" "$apps/Raiden.app"
+ln -sf "$apps/Raiden.app/Contents/MacOS/Raiden" "$HOME/.local/bin/raiden"
+pkill -x Raiden || true
+open "$apps/Raiden.app"
+echo "Installed ~/Applications/Raiden.app, and raiden in ~/.local/bin."
+"""
+
+[tasks.uninstall]
+description = "Remove Raiden, keeping your settings"
+run = """
+launchctl bootout "gui/$(id -u)/com.larsx2.raiden.agent" 2>/dev/null || true
+pkill -x Raiden || true
+rm -f "$HOME/Library/LaunchAgents/com.larsx2.raiden.agent.plist"
+rm -rf "$HOME/Applications/Raiden.app" "$HOME/.local/bin/raiden"
+echo "Removed Raiden. Settings stay in ~/.config/raiden, history in ~/Library/Application Support/raiden."
+"""
+
+[tasks.ui]
+description = "Build the screens, which the app embeds"
+depends = ["setup"]
+run = "pnpm --dir ui run build"
+
+[tasks.test]
+description = "Run the tests"
+depends = ["ui"]
+run = [
+  "pnpm --dir ui run test",
+  "pnpm --dir ui exec playwright install webkit",
+  "pnpm --dir ui run test:scenes",
+  "cargo test --workspace",
+]
+
+[tasks.lint]
+description = "Lint, format check and type check"
+depends = ["ui"]
+run = [
+  "pnpm exec oxlint --deny-warnings ui",
+  "pnpm exec oxfmt --check ui",
+  "pnpm --dir ui run typecheck",
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets -- -D warnings",
+]
+
+[tasks.fmt]
+description = "Format everything"
+run = ["pnpm exec oxfmt ui", "cargo fmt --all"]

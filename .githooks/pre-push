@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Commit everything, new files included, before pushing." >&2
+  exit 1
+fi
+mise run lint
+mise run test
