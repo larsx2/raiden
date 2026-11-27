@@ -31,6 +31,8 @@ describe("calculate", () => {
     expect(calculate("100 + 2^10%")).toBe("101.071773462536");
     expect(calculate("0.0000001*2")).toBe("0.0000002");
     expect(calculate("0 * -1")).toBe("0");
+    expect(calculate("2^53-1")).toBe("9007199254740991");
+    expect(calculate("1234567890123456+1")).toBe("1234567890123457");
   });
 
   it("stays quiet for anything that is not arithmetic", () => {
@@ -53,6 +55,8 @@ describe("calculate", () => {
       "2024-01-01",
       "555-1234",
       "2^70",
+      "2^-1074",
+      "100+10%%",
       "-".repeat(20000) + "1",
     ]) {
       expect(calculate(text)).toBeUndefined();

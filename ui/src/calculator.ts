@@ -1,6 +1,7 @@
 const TOKEN = /\s*(\d+\.?\d*|\.\d+|[-+*/×÷x%^()])\s*/y;
 const OPERATOR = /^[-+*/×÷x%^]$/;
 const LONGEST = 200;
+const SMALLEST = 1e-15;
 const DATE_OR_PHONE = /^(\d{4}-\d{1,2}-\d{1,2}|\d{3}-\d{3,4}(-\d{4})?)$/;
 
 const tokensOf = (text: string): string[] | undefined => {
@@ -91,7 +92,7 @@ const evaluate = (tokens: string[]): number => {
 };
 
 export function calculate(text: string): string | undefined {
-  if (text.length > LONGEST || /0x/i.test(text) || DATE_OR_PHONE.test(text.trim())) {
+  if (text.length > LONGEST || /0x|%%/i.test(text) || DATE_OR_PHONE.test(text.trim())) {
     return undefined;
   }
   const tokens = tokensOf(text);
@@ -102,8 +103,12 @@ export function calculate(text: string): string | undefined {
     return undefined;
   }
   const value = evaluate(tokens);
-  if (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) {
+  const size = Math.abs(value);
+  if (!Number.isFinite(value) || size > Number.MAX_SAFE_INTEGER || (size > 0 && size < SMALLEST)) {
     return undefined;
   }
-  return (value + 0).toLocaleString("en-US", { maximumSignificantDigits: 15, useGrouping: false });
+  if (Number.isInteger(value)) {
+    return String(value + 0);
+  }
+  return value.toLocaleString("en-US", { maximumSignificantDigits: 15, useGrouping: false });
 }
