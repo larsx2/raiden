@@ -5,7 +5,7 @@ test("a long window title stays on one line, without the app's name and profile"
 }) => {
   const title = `${"3 × 12 walking lunges with 20 kg dumbbells, slow and steady ".repeat(3)}- Zed - Alex (me@example.com)`;
   await page.goto(`/scene.html?fixture=answer&window=${encodeURIComponent(title)}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.locator(".row.selected").waitFor();
   await page.keyboard.press("Tab");
   const label = page.locator(".cx-label").first();

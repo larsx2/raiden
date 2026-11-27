@@ -5,7 +5,7 @@ const sent = (page: Page, command: string) =>
 
 const open = async (page: Page, extra = "") => {
   await page.goto(`/scene.html?fixture=files${extra}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.locator(".row.selected").waitFor();
 };
 

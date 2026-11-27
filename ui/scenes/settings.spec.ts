@@ -6,7 +6,7 @@ const sent = (page: Page, command: string) =>
 test.describe("when searching", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/scene.html?fixture=apps&commands=1&settings=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".row.selected").waitFor();
   });
 
@@ -47,7 +47,7 @@ test("a page picked before shows under Suggestions and the headings still count 
   page,
 }) => {
   await page.goto("/scene.html?fixture=apps&commands=1&settings=1&picked=setting");
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await expect(page.locator(".sec, .row .title")).toHaveText([
     "Suggestions",
     "Safari",

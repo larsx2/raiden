@@ -4,7 +4,7 @@ test("typing arithmetic shows the answer first, and Enter copies it and hides", 
   page,
 }) => {
   await page.goto("/scene.html?fixture=apps");
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.locator(".row.selected").waitFor();
   await page.keyboard.type("(2+3)*4");
   await expect(page.locator(".sec").first()).toHaveText("Calculator");

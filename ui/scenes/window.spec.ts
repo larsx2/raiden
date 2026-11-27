@@ -15,13 +15,13 @@ const EXPANDED = [900, 660];
 const openPulls = async (page: Page, more = "") => {
   await page.clock.setFixedTime(new Date(SCENE_TIME));
   await page.goto(`/scene.html?fixture=pulls&commands=1${more}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.locator(".scopes").waitFor();
 };
 
 const openSearch = async (page: Page, more = "") => {
   await page.goto(`/scene.html?fixture=apps&commands=1${more}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.locator(".row.selected").waitFor();
 };
 
@@ -166,7 +166,7 @@ test.describe("the expanded size", () => {
 
   test("Ask AI and Settings share the one size", async ({ page }) => {
     await page.goto("/scene.html?fixture=answer");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.keyboard.type("how do I land a change?");
     await page.keyboard.press("Tab");
     await expect(page.locator("#chip")).toHaveText("Ask AI");
@@ -185,7 +185,7 @@ test.describe("the expanded size", () => {
 
   test("a past conversation reopens at the chosen size", async ({ page }) => {
     await page.goto("/scene.html?fixture=recent-answers&size=expanded");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".row", { hasText: "How do I land a change?" }).click();
     await expect(page.locator("#chip")).toHaveText("Ask AI");
     expect(await size(page)).toEqual(EXPANDED);

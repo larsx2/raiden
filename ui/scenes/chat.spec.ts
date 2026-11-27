@@ -3,7 +3,7 @@ import recorded from "./answer.json" with { type: "json" };
 
 const openScene = async (page: Page, query: string) => {
   await page.goto(`/scene.html?fixture=answer${query}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
 };
 
 const box = async (page: Page, selector: string) => {
