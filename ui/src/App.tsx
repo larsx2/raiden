@@ -942,7 +942,7 @@ export function App(props: {
 
   const askFollowUp = () => {
     const question = draft().trim();
-    editor = freshEditor();
+    editor = { ...freshEditor(), register: editor.register, find: editor.find };
     if (field) {
       field.value = "";
     }
@@ -1440,10 +1440,29 @@ export function App(props: {
     text: input.value,
     at: input.selectionStart ?? input.value.length,
   });
+  const measure = document.createElement("canvas").getContext("2d");
+  const widthOf = (input: HTMLInputElement, text: string) => {
+    if (!measure) {
+      return 0;
+    }
+    const style = getComputedStyle(input);
+    measure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    return measure.measureText(text).width;
+  };
   const showLine = (input: HTMLInputElement, line: Line, typing: boolean) => {
     input.focus();
     const [from, to] = typing ? [line.at, line.at] : blockOf(line);
     input.setSelectionRange(from, to);
+    const style = getComputedStyle(input);
+    const inset = parseFloat(style.paddingLeft) || 0;
+    const start = widthOf(input, line.text.slice(0, from)) + inset;
+    const end = widthOf(input, line.text.slice(0, to)) + inset;
+    const room = input.clientWidth - inset - (parseFloat(style.paddingRight) || 0);
+    if (start - inset < input.scrollLeft) {
+      input.scrollLeft = start - inset;
+    } else if (end - inset > input.scrollLeft + room) {
+      input.scrollLeft = end - inset - room;
+    }
   };
 
   const enterInsert = () => {

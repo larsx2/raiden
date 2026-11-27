@@ -675,6 +675,20 @@ test.describe("editing the question in Ask AI", () => {
     await expect(page.locator("#q")).toHaveValue("");
   });
 
+  test("the field scrolls to keep the cursor in sight on a long question", async ({ page }) => {
+    await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
+    await page.waitForLoadState("load");
+    await page.locator(`#ai[data-phase="done"]`).waitFor();
+    await page.keyboard.type("why does ".repeat(30) + "the end");
+    await toNormal(page);
+    const scrolled = () =>
+      page.locator("#q").evaluate((field: HTMLInputElement) => field.scrollLeft);
+    await page.keyboard.press("0");
+    await expect.poll(scrolled).toBe(0);
+    await page.keyboard.press("$");
+    await expect.poll(scrolled).toBeGreaterThan(500);
+  });
+
   test("u takes back typing that began with a click", async ({ page }) => {
     await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
     await page.waitForLoadState("load");
