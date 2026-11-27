@@ -8,6 +8,8 @@ pub mod crashes;
 pub mod files;
 pub mod folders;
 pub mod login;
+#[cfg(unix)]
+pub mod names;
 pub mod probe;
 pub mod pulls;
 pub mod search;

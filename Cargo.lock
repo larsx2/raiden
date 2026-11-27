@@ -2845,6 +2845,7 @@ name = "raiden-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "memchr",
  "regex",
  "serde",
  "serde_json",
