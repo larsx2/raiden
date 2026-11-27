@@ -139,14 +139,20 @@ pub fn wants_messages(query: &str) -> bool {
 /// Keeps the people, channels and groups whose name or handle contains the query.
 pub fn by_name(hits: Vec<Hit>, query: &str) -> Vec<Hit> {
     let needle = query.trim().to_lowercase();
-    if needle.is_empty() {
-        return hits;
-    }
     hits.into_iter()
-        .filter(|h| {
-            h.title.to_lowercase().contains(&needle) || h.subtitle.to_lowercase().contains(&needle)
-        })
+        .filter(|hit| matches_name(hit, &needle))
         .collect()
+}
+
+/// Whether a hit's name or handle contains the already-lowercased needle.
+///
+/// An empty needle matches everything, so the whole catalog shows before the
+/// person types. The native side calls this on borrowed catalog hits, cloning
+/// only the matches, so a keystroke never copies hundreds of unmatched rows.
+pub fn matches_name(hit: &Hit, needle: &str) -> bool {
+    needle.is_empty()
+        || hit.title.to_lowercase().contains(needle)
+        || hit.subtitle.to_lowercase().contains(needle)
 }
 
 /// The `slack://` deep link that opens a conversation in the desktop app.
@@ -464,6 +470,22 @@ mod tests {
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].title, "Sam");
         assert_eq!(found[1].title, "random");
+    }
+
+    #[test]
+    fn filtering_and_ranking_a_big_catalog_stays_quick() {
+        let catalog: Vec<Hit> = (0..5000)
+            .map(|n| hit(n % 3, n % 5 == 0, n, &format!("room {n}")))
+            .collect();
+        let start = std::time::Instant::now();
+        let found = rank(by_name(catalog, "room 123"));
+        // 5000 rows filtered and sorted well under a frame; guards against O(n^2).
+        assert!(
+            start.elapsed().as_millis() < 50,
+            "took {:?}",
+            start.elapsed()
+        );
+        assert!(found.iter().all(|hit| hit.title.contains("123")));
     }
 
     #[test]

@@ -46,7 +46,7 @@ test.describe("when searching", () => {
 test("a page picked before shows under Suggestions and the headings still count right", async ({
   page,
 }) => {
-  await page.goto("/scene.html?fixture=apps&commands=1&settings=1&picked=setting");
+  await page.goto("/scene.html?fixture=apps&commands=1&settings=1&picked=setting&size=expanded");
   await page.waitForLoadState("networkidle");
   await expect(page.locator(".sec, .row .title")).toHaveText([
     "Suggestions",
@@ -66,7 +66,9 @@ test("a page picked before shows under Suggestions and the headings still count 
     "Fix grammar",
     "Clipboard History",
     "Pull Requests",
+    "Slack",
     "Settings",
+    "Open Settings File",
   ]);
   await expect(page.locator(".row", { hasText: "Display" }).locator(".sub")).toHaveText(
     "Accessibility",

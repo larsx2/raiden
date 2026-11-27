@@ -112,9 +112,14 @@ fn search(state: &Slack, query: &str) -> SlackView {
     let Some(catalog) = guard.as_ref() else {
         return SlackView::problem(Problem::offline());
     };
-    let mut hits = catalog.people.clone();
-    hits.extend(catalog.conversations.clone());
-    let mut hits = slack::by_name(hits, query);
+    let needle = query.trim().to_lowercase();
+    let mut hits: Vec<Hit> = catalog
+        .people
+        .iter()
+        .chain(&catalog.conversations)
+        .filter(|hit| slack::matches_name(hit, &needle))
+        .cloned()
+        .collect();
     if slack::wants_messages(query)
         && let Ok(found) = get(&token, &messages_url(query))
         && slack::check(&found, now()).is_ok()
