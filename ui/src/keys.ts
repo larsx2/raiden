@@ -43,6 +43,7 @@ export type PanelActions = {
   line: (step: 1 | -1) => void;
   edge: (last: boolean) => void;
   tab: (step: 1 | -1) => void;
+  edit: (event: Keystroke) => boolean;
 };
 
 export function shortcutOf(event: Keystroke): string {
@@ -224,6 +225,15 @@ export function handleKey(event: Keystroke, view: PanelView, actions: PanelActio
   const waiting = view.waiting === true;
   if (waiting) {
     actions.wait(false);
+  }
+  if (
+    view.answer === true &&
+    vimNormal(view) &&
+    !waiting &&
+    event.keyCode !== COMPOSING &&
+    actions.edit(event)
+  ) {
+    return true;
   }
   if (event.metaKey === true && event.key.toLowerCase() === "k") {
     actions.toggleMenu();

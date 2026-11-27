@@ -27,6 +27,14 @@ import {
   type Conversation,
 } from "./ask";
 import { createAsking } from "./asking";
+import {
+  blockOf,
+  freshEditor,
+  press as pressEdit,
+  settle as settleEdit,
+  tokenOf,
+  type Line,
+} from "./editing";
 import { ClipboardList } from "./ClipboardList";
 import { CLIPBOARD_PLACEHOLDER, CLIPBOARD_TITLE, DELETE_KEYS, createClipboard } from "./clipboard";
 import {
@@ -37,7 +45,7 @@ import {
   type FileRow,
 } from "./files";
 import { createFrameWatcher } from "./frames";
-import { handleKey, stepsBack, switchesToInsert } from "./keys";
+import { handleKey, stepsBack, switchesToInsert, type Keystroke } from "./keys";
 import {
   pieces,
   sectionsOf,
@@ -191,6 +199,7 @@ export function App(props: {
     setSearchNote("");
   };
   const normal = () => vimOn() && mode() === "normal";
+  let editor = freshEditor();
   const findables = createMemo(() => saved().map(findable));
   const shownActions = createMemo(() => filterActions(menu()?.actions ?? [], menuQuery()));
   const requested = new Set<string>();
@@ -1310,6 +1319,11 @@ export function App(props: {
         setWaitingG(false);
         setMode("normal");
       });
+      if (chatting() && field) {
+        const settled = settleEdit(editor, lineOf(field));
+        editor = settled.editor;
+        showLine(field, settled.line, false);
+      }
     },
     insert: (select: boolean, later?: boolean) => {
       if (later) {
@@ -1342,6 +1356,34 @@ export function App(props: {
         handPicked = true;
         select(last ? results().length - 1 : 0);
       }
+    },
+    edit: (event: Keystroke) => {
+      if (!chatting() || !field || event.metaKey === true || event.altKey === true) {
+        return false;
+      }
+      if (event.key === "Escape" || (event.ctrlKey === true && event.key === "[")) {
+        const pending = editor.keys.length > 0;
+        editor = { ...editor, keys: [] };
+        return pending;
+      }
+      const token = event.ctrlKey === true ? undefined : tokenOf(editor.keys, event);
+      if (token === undefined) {
+        return false;
+      }
+      const done = pressEdit(editor, lineOf(field), token);
+      if (done === "skip") {
+        return false;
+      }
+      editor = done.editor;
+      if (done.line.text !== field.value) {
+        field.value = done.line.text;
+        fieldChanged();
+      }
+      if (done.insert) {
+        enterInsert();
+      }
+      showLine(field, done.line, done.insert);
+      return true;
     },
     tab: (step: 1 | -1) => {
       if (!pulls.loaded() || pulls.gate() !== null) {
@@ -1383,7 +1425,18 @@ export function App(props: {
     }
   };
 
+  const lineOf = (input: HTMLInputElement): Line => ({
+    text: input.value,
+    at: input.selectionStart ?? input.value.length,
+  });
+  const showLine = (input: HTMLInputElement, line: Line, typing: boolean) => {
+    input.focus();
+    const [from, to] = typing ? [line.at, line.at] : blockOf(line);
+    input.setSelectionRange(from, to);
+  };
+
   const enterInsert = () => {
+    editor = { ...editor, keys: [] };
     batch(() => {
       setWaitingG(false);
       setMode("insert");
@@ -1418,7 +1471,10 @@ export function App(props: {
     }
     if (answering()) {
       const phase = asking.phase();
-      return phase !== null && phase !== "waiting" && phase !== "signin" && phase !== "signing";
+      return (
+        (phase !== null && phase !== "waiting" && phase !== "signin" && phase !== "signing") ||
+        query() !== ""
+      );
     }
     return results().length > 0 && nothingFound() === "";
   };
@@ -1434,7 +1490,16 @@ export function App(props: {
             ? "answer"
             : "search";
 
-  createEffect(on([screen, vimOn], () => enterInsert(), { defer: true }));
+  createEffect(
+    on(
+      [screen, vimOn],
+      () => {
+        editor = freshEditor();
+        enterInsert();
+      },
+      { defer: true },
+    ),
+  );
   createEffect(
     on(
       normal,

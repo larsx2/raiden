@@ -382,14 +382,6 @@ const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void> }> = [
       await page.locator(".pr.selected").waitFor();
     },
   },
-  {
-    name: "Ask AI",
-    open: async (page) => {
-      await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
-      await page.waitForLoadState("load");
-      await page.locator(`#ai[data-phase="done"]`).waitFor();
-    },
-  },
 ];
 
 test.describe("Normal takes no text", () => {
@@ -549,5 +541,65 @@ test.describe("Normal in Ask AI", () => {
     await page.keyboard.press("Escape");
     await expect(page.locator("#chip")).toBeHidden();
     await expect(badge(page)).toHaveText("INSERT");
+  });
+});
+
+const caret = (page: Page) =>
+  page.evaluate(() => {
+    const field = document.querySelector<HTMLInputElement>("#q");
+    return field ? [field.selectionStart, field.selectionEnd] : [];
+  });
+
+test.describe("editing the question in Ask AI", () => {
+  test("Normal moves and changes the question, and u takes the change back", async ({ page }) => {
+    await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
+    await page.waitForLoadState("load");
+    await page.locator(`#ai[data-phase="done"]`).waitFor();
+    const field = page.locator("#q");
+    await page.keyboard.type("how do I rebase onto main");
+    await toNormal(page);
+    expect(await caret(page)).toEqual([24, 25]);
+    await page.keyboard.type("bbcw");
+    await expect(badge(page)).toHaveText("INSERT");
+    await page.keyboard.type("merge");
+    await expect(field).toHaveValue("how do I rebase merge main");
+    await toNormal(page);
+    await page.keyboard.type("0dw");
+    await expect(field).toHaveValue("do I rebase merge main");
+    expect(await caret(page)).toEqual([0, 1]);
+    await page.keyboard.type("uu");
+    await expect(field).toHaveValue("how do I rebase onto main");
+    await page.keyboard.type("$x");
+    await expect(field).toHaveValue("how do I rebase onto mai");
+    await page.keyboard.type("A");
+    await page.keyboard.type("n?");
+    await expect(field).toHaveValue("how do I rebase onto main?");
+  });
+
+  test("j and k still scroll the answer while the question has text", async ({ page }) => {
+    await openLongAnswer(page, "&vim=1");
+    await page.keyboard.type("more");
+    await toNormal(page);
+    await page.keyboard.press("j");
+    await expect.poll(async () => (await answerScroll(page))?.top ?? 0).toBeGreaterThanOrEqual(60);
+    await expect(page.locator("#q")).toHaveValue("more");
+  });
+
+  test("Esc on a first question goes to Normal instead of throwing it away", async ({ page }) => {
+    await openSearch(page, "&vim=1");
+    await page.keyboard.press("Tab");
+    await expect(page.locator("#q")).toHaveAttribute("placeholder", /./);
+    await page.keyboard.type("why is the sky blue");
+    await toNormal(page);
+    await page.keyboard.type("bdiw");
+    await expect(page.locator("#q")).toHaveValue("why is the sky ");
+  });
+
+  test("the main search keeps its Normal keys", async ({ page }) => {
+    await openSearch(page, "&vim=1");
+    await page.keyboard.type("s");
+    await toNormal(page);
+    await page.keyboard.press("x");
+    await expect(page.locator("#q")).toHaveValue("s");
   });
 });
