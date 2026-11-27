@@ -10,6 +10,7 @@ test("typing arithmetic shows the answer first, and Enter copies it and hides", 
   await expect(page.locator(".sec").first()).toHaveText("Calculator");
   await expect(page.locator(".row.selected")).toContainText("20(2+3)*4Built in");
   await expect(page.locator(".list .none")).toHaveCount(0);
+  await expect(page.locator("#ctx")).toHaveText("Calculator");
   await page.keyboard.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.sent.map((call) => call.command)))

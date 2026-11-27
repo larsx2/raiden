@@ -1,5 +1,6 @@
 const TOKEN = /\s*(\d+\.?\d*|\.\d+|[-+*/×÷x%^()])\s*/y;
 const OPERATOR = /^[-+*/×÷x%^]$/;
+const LONGEST = 200;
 
 const tokensOf = (text: string): string[] | undefined => {
   const tokens: string[] = [];
@@ -74,10 +75,19 @@ const evaluate = (tokens: string[]): number => {
 };
 
 export function calculate(text: string): string | undefined {
+  if (text.length > LONGEST || /0x/i.test(text)) {
+    return undefined;
+  }
   const tokens = tokensOf(text);
-  if (!tokens?.some((token) => OPERATOR.test(token))) {
+  const operates = tokens?.some(
+    (token, at) => OPERATOR.test(token) && at > 0 && !/^[-+*/×÷x^(]$/.test(tokens[at - 1]!),
+  );
+  if (!tokens || !operates) {
     return undefined;
   }
   const value = evaluate(tokens);
-  return Number.isFinite(value) ? String(Number(value.toPrecision(12))) : undefined;
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+  return Number.isInteger(value) ? String(value) : String(Number(value.toPrecision(12)));
 }

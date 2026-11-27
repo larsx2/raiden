@@ -862,9 +862,10 @@ export function App(props: {
                 keys: "↵",
                 hides: true,
                 run: () =>
-                  void props
-                    .call("copy_text", { text: extra.value })
-                    .then(() => props.call("hide")),
+                  void props.call("copy_text", { text: extra.value }).then(
+                    () => props.call("hide"),
+                    (error: unknown) => setSearchNote(problemOf(error)),
+                  ),
               },
             ]
           : [{ title: "Ask AI", keys: "↵", hides: false, run: () => startAsking(extra.question) }];
@@ -2201,6 +2202,7 @@ export function App(props: {
               </Show>
             </Match>
             <Match when={fileAt(selected())}>Files</Match>
+            <Match when={extraAt(selected())?.kind === "math"}>Calculator</Match>
             <Match when={extraAt(selected()) || isAiCommand(appAt(selected()))}>
               <AiIcon />
               AI

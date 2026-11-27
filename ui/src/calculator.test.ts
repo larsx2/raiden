@@ -16,6 +16,8 @@ describe("calculate", () => {
     expect(calculate("200 * 15%")).toBe("30");
     expect(calculate("0.1 + 0.2")).toBe("0.3");
     expect(calculate(".5*2")).toBe("1");
+    expect(calculate("-2 * 3")).toBe("-6");
+    expect(calculate("2^40+1")).toBe("1099511627777");
   });
 
   it("stays quiet for anything that is not arithmetic", () => {
@@ -31,6 +33,11 @@ describe("calculate", () => {
       "1/0",
       "xcode",
       "2+2 apples",
+      "-7",
+      "--2",
+      "-(2)",
+      "0x10",
+      "-".repeat(20000) + "1",
     ]) {
       expect(calculate(text)).toBeUndefined();
     }
