@@ -4,18 +4,19 @@ const sent = (page: Page, command: string) =>
   page.evaluate((name) => window.sent.filter((call) => call.command === name), command);
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/scene.html?fixture=apps&commands=1");
+  await page.goto("/scene.html?fixture=apps&commands=1&size=expanded");
   await page.waitForLoadState("networkidle");
   await page.locator(".row.selected").waitFor();
 });
 
 test("the commands sit under Commands on the empty window", async ({ page }) => {
   await expect(page.locator(".sec").last()).toHaveText("Commands");
-  await expect(page.locator(".row").nth(-5)).toContainText("Fix grammarSelected textAI");
-  await expect(page.locator(".row").nth(-4)).toContainText("Clipboard HistoryRaidenCommand");
-  await expect(page.locator(".row").nth(-3)).toContainText(
+  await expect(page.locator(".row").nth(-6)).toContainText("Fix grammarSelected textAI");
+  await expect(page.locator(".row").nth(-5)).toContainText("Clipboard HistoryRaidenCommand");
+  await expect(page.locator(".row").nth(-4)).toContainText(
     "Pull RequestsGitHub1 needs your review",
   );
+  await expect(page.locator(".row").nth(-3)).toContainText("SlackSlackCommand");
   await expect(page.locator(".row").nth(-2)).toContainText("SettingsRaiden⌘ ,");
   await expect(page.locator(".row").last()).toContainText("Open Settings Fileraiden.tomlCommand");
 });

@@ -16,6 +16,7 @@ export type PanelView = {
   settings?: boolean;
   clipboard?: boolean;
   pulls?: boolean;
+  slack?: boolean;
   vim?: boolean;
   normal?: boolean;
   waiting?: boolean;
@@ -58,7 +59,11 @@ export function shortcutOf(event: Keystroke): string {
 }
 
 const inside = (view: PanelView) =>
-  view.answer === true || view.settings === true || view.clipboard === true || view.pulls === true;
+  view.answer === true ||
+  view.settings === true ||
+  view.clipboard === true ||
+  view.pulls === true ||
+  view.slack === true;
 
 const COMPOSING = 229;
 const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn", "OS"]);
@@ -271,7 +276,12 @@ export function handleKey(event: Keystroke, view: PanelView, actions: PanelActio
         actions.removeTag();
         return true;
       }
-      if (view.settings === true || view.clipboard === true || view.pulls === true) {
+      if (
+        view.settings === true ||
+        view.clipboard === true ||
+        view.pulls === true ||
+        view.slack === true
+      ) {
         actions.back();
         return true;
       }

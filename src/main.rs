@@ -17,6 +17,7 @@ mod picks;
 mod pulls;
 mod settings;
 mod sizes;
+mod slack;
 mod spotlight;
 mod terminals;
 mod typeahead;
@@ -318,6 +319,12 @@ async fn apps(
         under: raiden_core::pulls::UNDER.to_owned(),
         accessory: pulls.accessory(),
     });
+    apps.push(raiden_core::apps::App {
+        name: raiden_core::slack::VIEW_TITLE.to_owned(),
+        path: raiden_core::slack::VIEW_ID.to_owned(),
+        under: raiden_core::slack::UNDER.to_owned(),
+        accessory: String::new(),
+    });
     Ok(picks::listing(apps, &usage.0))
 }
 
@@ -408,6 +415,7 @@ fn launch(rows: Option<usize>, development: bool) {
         .manage(clipboard::History::new(&folders(development).1))
         .manage(files::Files::start())
         .manage(pulls::Pulls::new(&folders(development).1))
+        .manage(slack::Slack::new())
         .manage(sizes::Sizes::new(&folders(development).1))
         .on_web_content_process_terminate(crashes::reload)
         .plugin(tauri_nspanel::init())
@@ -476,6 +484,12 @@ fn launch(rows: Option<usize>, development: bool) {
             pulls::pull_requests_avatar,
             pulls::pull_requests_pin,
             pulls::pull_requests_context,
+            slack::slack_manifest,
+            slack::slack_has_token,
+            slack::slack_search,
+            slack::slack_save_token,
+            slack::slack_sign_out,
+            slack::slack_open,
             sizes::window_size,
             sizes::expand_window
         ])

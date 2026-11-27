@@ -11,7 +11,8 @@ export type Fixture =
   | "settings"
   | "clipboard"
   | "files"
-  | "pulls";
+  | "pulls"
+  | "slack";
 
 export type SentCall = { command: string; args?: Record<string, unknown> };
 
@@ -101,6 +102,87 @@ export const FIXTURE_TERMINALS: Array<[id: TerminalId, name: string, app: string
   ["alacritty", "Alacritty", null],
   ["warp", "Warp", null],
 ];
+
+export type FixtureHit = {
+  id: string;
+  kind: "person" | "channel" | "group" | "message";
+  title: string;
+  subtitle: string;
+  unread: number;
+  mention: boolean;
+  updated: number;
+  link: string;
+};
+
+// Already in the order the backend ranks them: unread direct messages first,
+// then the unread group, then read channels and people.
+export const FIXTURE_SLACK_NAMES: FixtureHit[] = [
+  {
+    id: "U1",
+    kind: "person",
+    title: "Ana Lee",
+    subtitle: "@ana",
+    unread: 3,
+    mention: true,
+    updated: 1700,
+    link: "slack://user?team=T1&id=U1",
+  },
+  {
+    id: "G1",
+    kind: "group",
+    title: "Ana, Sam, You",
+    subtitle: "group",
+    unread: 1,
+    mention: true,
+    updated: 1650,
+    link: "slack://channel?team=T1&id=G1",
+  },
+  {
+    id: "C1",
+    kind: "channel",
+    title: "#general",
+    subtitle: "channel",
+    unread: 0,
+    mention: false,
+    updated: 1600,
+    link: "slack://channel?team=T1&id=C1",
+  },
+  {
+    id: "C2",
+    kind: "channel",
+    title: "#random",
+    subtitle: "channel",
+    unread: 0,
+    mention: false,
+    updated: 1500,
+    link: "slack://channel?team=T1&id=C2",
+  },
+  {
+    id: "U2",
+    kind: "person",
+    title: "Sam Ortiz",
+    subtitle: "@sam",
+    unread: 0,
+    mention: false,
+    updated: 0,
+    link: "slack://user?team=T1&id=U2",
+  },
+];
+
+export const FIXTURE_SLACK_MESSAGES: FixtureHit[] = [
+  {
+    id: "1700.0001",
+    kind: "message",
+    title: "ship the launcher tonight",
+    subtitle: "ana · #general",
+    unread: 0,
+    mention: false,
+    updated: 1700,
+    link: "https://epyhq.slack.com/archives/C1/p17000001",
+  },
+];
+
+export const SLACK_MANIFEST = '{"display_information":{"name":"Raiden"}}';
 
 export const QUICK_MESSAGE = "Fixed 1 sentence in TextEdit";
 
