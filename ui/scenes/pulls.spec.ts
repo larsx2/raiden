@@ -7,7 +7,7 @@ const sent = (page: Page, command: string) =>
 const openPulls = async (page: Page, params = "") => {
   await page.clock.setFixedTime(new Date(SCENE_TIME));
   await page.goto(`/scene.html?fixture=pulls${params}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await expect(page.locator("#chip")).toHaveText("Pull Requests");
 };
 
@@ -37,7 +37,7 @@ test.describe("getting there", () => {
   }) => {
     await page.clock.setFixedTime(new Date(SCENE_TIME));
     await page.goto("/scene.html?fixture=apps&commands=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".row.selected").waitFor();
     await page.keyboard.type("pull");
     await expect(page.locator(".row.selected .title")).toHaveText("Pull Requests");
@@ -253,7 +253,7 @@ test.describe("acting on a pull request", () => {
   }) => {
     await page.clock.setFixedTime(new Date(SCENE_TIME));
     await page.goto("/scene.html?fixture=apps&commands=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".row.selected").waitFor();
     await page.keyboard.type("pull");
     await expect(page.locator(".row.selected .title")).toHaveText("Pull Requests");
@@ -273,7 +273,7 @@ test.describe("acting on a pull request", () => {
   test("after Enter opens one, the next opening starts with an empty search", async ({ page }) => {
     await page.clock.setFixedTime(new Date(SCENE_TIME));
     await page.goto("/scene.html?fixture=apps&commands=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".row.selected").waitFor();
     await page.keyboard.type("pull");
     await expect(page.locator(".row.selected .title")).toHaveText("Pull Requests");
@@ -644,7 +644,7 @@ test.describe("other views from it", () => {
   const fromSearch = async (page: Page) => {
     await page.clock.setFixedTime(new Date(SCENE_TIME));
     await page.goto("/scene.html?fixture=apps&commands=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".row.selected").waitFor();
     await page.keyboard.type("pull");
     await expect(page.locator(".row.selected .title")).toHaveText("Pull Requests");

@@ -20,7 +20,7 @@ const windowTag = { kind: "window", label: "AGENTS.md in Zed", text: "AGENTS.md 
 
 const openScene = async (page: Page, query: string) => {
   await page.goto(`/scene.html?fixture=answer${query}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
 };
 
 test("Tab turns what is typed into a question, with the front window attached", async ({

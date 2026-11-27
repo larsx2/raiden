@@ -7,14 +7,14 @@ const sent = (page: Page, command: string) =>
 const openHistory = async (page: Page) => {
   await page.clock.setFixedTime(new Date(SCENE_TIME));
   await page.goto("/scene.html?fixture=clipboard");
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await expect(page.locator(".clip").first()).toBeVisible();
 };
 
 test.describe("getting there", () => {
   test("typing clip finds Clipboard History under Raiden, and Enter opens it", async ({ page }) => {
     await page.goto("/scene.html?fixture=apps&commands=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".row.selected").waitFor();
     await page.keyboard.type("clip");
     await expect(page.locator(".row.selected .title")).toHaveText("Clipboard History");
@@ -36,7 +36,7 @@ test.describe("getting there", () => {
     page,
   }) => {
     await page.goto("/scene.html?fixture=apps&commands=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.evaluate(() => window.openClipboard?.(false));
     await expect(page.locator("#chip")).toHaveText("Clipboard History");
     expect(await sent(page, "hide")).toEqual([]);
@@ -46,7 +46,7 @@ test.describe("getting there", () => {
 
   test("the hotkey over Settings switches to Clipboard history", async ({ page }) => {
     await page.goto("/scene.html?fixture=apps&commands=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.keyboard.press("Meta+Comma");
     await expect(page.locator("#chip")).toHaveText("Settings");
     await page.evaluate(() => window.openClipboard?.(true));
@@ -74,7 +74,7 @@ test.describe("keys typed right after the hotkey", () => {
 
   test("land in its search, in order, when the hotkey opens the hidden panel", async ({ page }) => {
     await page.goto("/scene.html?fixture=apps&clips=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.evaluate(
       (batches) => {
         window.typedAhead = batches;
@@ -89,7 +89,7 @@ test.describe("keys typed right after the hotkey", () => {
 
   test("land in its search when the hotkey opens it over the shown panel", async ({ page }) => {
     await page.goto("/scene.html?fixture=apps&clips=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.evaluate(
       (batches) => {
         window.typedAhead = batches;
@@ -202,7 +202,7 @@ test.describe("acting on an item", () => {
   test("a second Enter while pasting pastes once", async ({ page }) => {
     await page.clock.setFixedTime(new Date(SCENE_TIME));
     await page.goto("/scene.html?fixture=clipboard&pastefails=busy");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await expect(page.locator(".clip").first()).toBeVisible();
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");

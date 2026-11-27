@@ -5,7 +5,7 @@ const sent = (page: Page, command: string) =>
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/scene.html?fixture=apps&commands=1");
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.locator(".row.selected").waitFor();
 });
 
