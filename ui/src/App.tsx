@@ -31,8 +31,10 @@ import {
   blockOf,
   freshEditor,
   press as pressEdit,
+  remember,
   settle as settleEdit,
   tokenOf,
+  wantsChar,
   type Line,
 } from "./editing";
 import { ClipboardList } from "./ClipboardList";
@@ -937,6 +939,7 @@ export function App(props: {
 
   const askFollowUp = () => {
     const question = draft().trim();
+    editor = freshEditor();
     if (field) {
       field.value = "";
     }
@@ -1078,6 +1081,9 @@ export function App(props: {
       setMenuQuery("");
       setMenuSelected(0);
     } else if (field) {
+      if (chatting() && field.value !== "") {
+        editor = remember(editor, lineOf(field));
+      }
       field.value = "";
       if (clip.open()) {
         clip.filter("");
@@ -1358,17 +1364,18 @@ export function App(props: {
       }
     },
     edit: (event: Keystroke) => {
-      if (!chatting() || !field || event.metaKey === true || event.altKey === true) {
+      if (!chatting() || !field) {
         return false;
       }
-      if (event.key === "Escape" || (event.ctrlKey === true && event.key === "[")) {
-        const pending = editor.keys.length > 0;
-        editor = { ...editor, keys: [] };
-        return pending;
-      }
-      const token = event.ctrlKey === true ? undefined : tokenOf(editor.keys, event);
+      const pending = editor.keys.length > 0;
+      const usable =
+        event.metaKey !== true &&
+        event.ctrlKey !== true &&
+        (event.altKey !== true || wantsChar(editor.keys));
+      const token = usable ? tokenOf(editor.keys, event) : undefined;
       if (token === undefined) {
-        return false;
+        editor = { ...editor, keys: [] };
+        return pending && event.metaKey !== true;
       }
       const done = pressEdit(editor, lineOf(field), token);
       if (done === "skip") {
@@ -1552,7 +1559,11 @@ export function App(props: {
     if (!event.repeat) {
       held = stepsBack(event, now) || switchesToInsert(event, now) ? event.key : "";
     }
-    if (handleKey(event, now, actions)) {
+    const handled = handleKey(event, now, actions);
+    if (!event.repeat && now.normal && !normal()) {
+      held = event.key;
+    }
+    if (handled) {
       event.preventDefault();
       if (now.normal && !now.menu) {
         void props.call("keystroke", { ms: performance.now() - event.timeStamp });

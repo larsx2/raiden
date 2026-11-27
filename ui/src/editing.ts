@@ -43,6 +43,9 @@ export function before(text: string, at: number): number {
 
 const lastChar = (text: string) => before(text, text.length);
 
+const charStart = (text: string, at: number) =>
+  at > 0 && isLow(text.charCodeAt(at)) && isHigh(text.charCodeAt(at - 1)) ? at - 1 : at;
+
 const rest = (text: string, at: number) => Math.min(Math.max(0, at), lastChar(text));
 
 export const blockOf = (line: Line): [number, number] => [line.at, after(line.text, line.at)];
@@ -100,15 +103,26 @@ function wordBack(text: string, at: number, big: boolean): number {
 
 const firstWord = (text: string) => Math.max(0, text.search(/\S/));
 
-function findChar(text: string, at: number, find: Find, count: number): number | undefined {
+function findChar(
+  text: string,
+  at: number,
+  find: Find,
+  count: number,
+  again = false,
+): number | undefined {
   const forward = find.kind === "f" || find.kind === "t";
+  const close = again && (find.kind === "t" || find.kind === "T");
   let next = at;
   for (let time = 0; time < count; time++) {
+    const skip = close && time === 0;
+    const from = forward
+      ? after(text, skip ? after(text, next) : next)
+      : (skip ? before(text, next) : next) - 1;
     const found = forward
-      ? text.indexOf(find.char, after(text, next))
-      : next <= 0
+      ? text.indexOf(find.char, from)
+      : from < 0
         ? -1
-        : text.lastIndexOf(find.char, next - 1);
+        : text.lastIndexOf(find.char, from);
     if (found < 0) {
       return undefined;
     }
@@ -165,7 +179,7 @@ function moveBy(
     case "e":
     case "E":
       return {
-        to: repeat((from) => wordEnd(text, from, motion === "E")),
+        to: repeat((from) => charStart(text, wordEnd(text, from, motion === "E"))),
         inclusive: true,
       };
     case "0":
@@ -180,7 +194,7 @@ function moveBy(
         return undefined;
       }
       const find = motion === ";" ? last : reversed(last);
-      const to = findChar(text, at, find, count);
+      const to = findChar(text, at, find, count, true);
       return to === undefined
         ? undefined
         : { to, inclusive: find.kind === "f" || find.kind === "t" };
@@ -299,7 +313,7 @@ export function tokenOf(keys: string[], event: Keystroke): string | undefined {
   return [...letter].length === 1 ? letter : undefined;
 }
 
-const remember = (editor: Editor, line: Line): Editor => ({
+export const remember = (editor: Editor, line: Line): Editor => ({
   ...editor,
   undo: [...editor.undo, line].slice(-UNDO_LIMIT),
 });
@@ -354,16 +368,24 @@ function withOperator(editor: Editor, line: Line, parsed: Parsed): Edited | unde
     const big = parsed.command[1] === "W";
     return operate(editor, line, operator, wordObject(text, at, around, big));
   }
-  let command = parsed.command;
-  if (operator === "c" && kind(text[at], false) !== 0) {
-    command = command === "w" ? "e" : command === "W" ? "E" : command;
-  }
-  const motion = moveBy(command, parsed.char, text, at, parsed.count, editor.find);
+  const big = parsed.command === "W";
+  const motion =
+    operator === "c" && (parsed.command === "w" || big) && kind(text[at], big) !== 0
+      ? changeWord(text, at, parsed.count, big)
+      : moveBy(parsed.command, parsed.char, text, at, parsed.count, editor.find);
   if (!motion) {
     return undefined;
   }
   const found = motion.find ? { ...editor, find: motion.find } : editor;
   return operate(found, line, operator, rangeOf(motion, at, text));
+}
+
+function changeWord(text: string, at: number, count: number, big: boolean): Motion {
+  let to = wordEnd(text, at - 1, big);
+  for (let time = 1; time < count; time++) {
+    to = wordEnd(text, to, big);
+  }
+  return { to: charStart(text, to), inclusive: true };
 }
 
 const insertAt = (editor: Editor, line: Line, at: number): Edited => ({

@@ -51,6 +51,8 @@ describe("moving in the question", () => {
     expect(shown(type(QUESTION, 25, "Fe"))).toBe("how do I rebas|e onto main?");
     expect(shown(type(QUESTION, 25, "Te"))).toBe("how do I rebase| onto main?");
     expect(shown(type(QUESTION, 0, "fz"))).toBe("|how do I rebase onto main?");
+    expect(shown(type("a,b,c,d", 0, "t,;"))).toBe("a,|b,c,d");
+    expect(shown(type("a,b,c,d", 6, "T,;"))).toBe("a,b,|c,d");
   });
 });
 
@@ -83,6 +85,9 @@ describe("changing the question", () => {
     expect(changed.insert).toBe(true);
     expect(shown(changed)).toBe("how do I | onto main?");
     expect(shown(type(QUESTION, 9, "ciw"))).toBe("how do I | onto main?");
+    expect(shown(type(QUESTION, 7, "cw"))).toBe("how do | rebase onto main?");
+    expect(shown(type(QUESTION, 5, "cw"))).toBe("how d| I rebase onto main?");
+    expect(shown(type(QUESTION, 4, "c2w"))).toBe("how | rebase onto main?");
     expect(shown(type(QUESTION, 9, "C"))).toBe("how do I |");
     expect(shown(type(QUESTION, 9, "cc"))).toBe("|");
     expect(shown(type(QUESTION, 9, "S"))).toBe("|");
@@ -154,5 +159,7 @@ describe("keys left for the screen", () => {
     expect(shown(type("a😀b", 1, "x"))).toBe("a|b");
     expect(shown(type("a😀b", 0, "l"))).toBe("a|😀b");
     expect(shown(type("a😀b", 0, "ll"))).toBe("a😀|b");
+    expect(shown(type("a 😀😀 b", 0, "ex"))).toBe("a 😀| b");
+    expect(shown(type("a 😀😀 b", 0, "cw"))).toBe("| 😀😀 b");
   });
 });

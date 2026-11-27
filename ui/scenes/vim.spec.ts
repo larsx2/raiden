@@ -558,6 +558,7 @@ test.describe("editing the question in Ask AI", () => {
     const field = page.locator("#q");
     await page.keyboard.type("how do I rebase onto main");
     await toNormal(page);
+    const before = await commandsSent(page);
     expect(await caret(page)).toEqual([24, 25]);
     await page.keyboard.type("bbcw");
     await expect(badge(page)).toHaveText("INSERT");
@@ -571,9 +572,41 @@ test.describe("editing the question in Ask AI", () => {
     await expect(field).toHaveValue("how do I rebase onto main");
     await page.keyboard.type("$x");
     await expect(field).toHaveValue("how do I rebase onto mai");
+    expect(await commandsSent(page)).toEqual(before);
     await page.keyboard.type("A");
     await page.keyboard.type("n?");
     await expect(field).toHaveValue("how do I rebase onto main?");
+  });
+
+  test("Esc in Normal clears the question, and u brings it back", async ({ page }) => {
+    await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
+    await page.waitForLoadState("load");
+    await page.locator(`#ai[data-phase="done"]`).waitFor();
+    await page.keyboard.type("keep this");
+    await toNormal(page);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#q")).toHaveValue("");
+    await page.keyboard.press("u");
+    await expect(page.locator("#q")).toHaveValue("keep this");
+  });
+
+  test("a waiting d is dropped by Enter, and holding A types nothing", async ({ page }) => {
+    await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
+    await page.waitForLoadState("load");
+    await page.locator(`#ai[data-phase="done"]`).waitFor();
+    await page.keyboard.type("one two");
+    await toNormal(page);
+    await page.keyboard.type("0d");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.type("w");
+    await expect(page.locator("#q")).toHaveValue("one two");
+    await page.keyboard.down("Shift");
+    await page.keyboard.down("A");
+    await page.keyboard.down("A");
+    await page.keyboard.up("A");
+    await page.keyboard.up("Shift");
+    await expect(badge(page)).toHaveText("INSERT");
+    await expect(page.locator("#q")).toHaveValue("one two");
   });
 
   test("j and k still scroll the answer while the question has text", async ({ page }) => {
