@@ -94,11 +94,13 @@ export function createSlack(options: { call: Call }) {
 
   const run = (text: string) => {
     const mine = opened;
-    const query = ++queried;
+    const query = queried;
+    const current = () => mine === opened && query === queried;
     call<SlackView>("slack_search", { query: text })
-      // Only the newest query wins, so a slow reply cannot replace newer hits.
-      .then((view) => query === queried && take(view, mine))
-      .catch((error: unknown) => mine === opened && setNotice(problemOf(error)));
+      // Only the newest query wins, so a slow reply cannot replace newer hits
+      // or raise a notice after a later query has already answered.
+      .then((view) => current() && take(view, mine))
+      .catch((error: unknown) => current() && setNotice(problemOf(error)));
   };
 
   const show = async () => {
@@ -130,6 +132,8 @@ export function createSlack(options: { call: Call }) {
   };
 
   const filter = (text: string) => {
+    // Each edit retires any query still in flight, so its late reply is dropped.
+    queried++;
     batch(() => {
       setQuery(text);
       setSelected(0);
@@ -182,7 +186,9 @@ export function createSlack(options: { call: Call }) {
     if (!hit) {
       return;
     }
-    call("open_link", { url: hit.link }).catch((error: unknown) => setNotice(problemOf(error)));
+    // A Slack destination, not a web link: the native side validates the
+    // slack:// or permalink and hides the launcher on success.
+    call("slack_open", { url: hit.link }).catch((error: unknown) => setNotice(problemOf(error)));
   };
 
   const copyLink = () => {
@@ -209,10 +215,11 @@ export function createSlack(options: { call: Call }) {
 
   const signOut = () => {
     const mine = ++opened;
-    call("slack_sign_out")
-      .then(() => {
+    call<SlackView>("slack_sign_out")
+      .then((view) => {
         if (mine === opened) {
-          void show();
+          take(view, mine);
+          setQuery("");
         }
       })
       .catch((error: unknown) => mine === opened && setNotice(problemOf(error)));
@@ -234,13 +241,24 @@ export function createSlack(options: { call: Call }) {
         { title: "Open Slack app builder", keys: "⌘ O", hides: true, run: openBuilder },
       ];
     }
+    const list: Action[] = [];
+    if (selectedHit()) {
+      list.push({ title: "Open in Slack", keys: OPEN_KEYS, hides: true, run: openHit });
+      list.push({ title: "Copy Link", keys: COPY_LINK_KEYS, hides: false, run: copyLink });
+    }
+    // Always offer sign-out, so a revoked token can be replaced even when the
+    // list is empty.
+    list.push({ title: "Sign out of Slack", keys: SIGN_OUT_KEYS, hides: false, run: signOut });
+    return list;
+  };
+
+  const primary = () => {
+    if (gate()) {
+      return { title: "Save token", keys: OPEN_KEYS, hides: false, run: saveToken };
+    }
     return selectedHit()
-      ? [
-          { title: "Open in Slack", keys: OPEN_KEYS, hides: true, run: openHit },
-          { title: "Copy Link", keys: COPY_LINK_KEYS, hides: false, run: copyLink },
-          { title: "Sign out of Slack", keys: SIGN_OUT_KEYS, hides: false, run: signOut },
-        ]
-      : [];
+      ? { title: "Open in Slack", keys: OPEN_KEYS, hides: true, run: openHit }
+      : undefined;
   };
 
   const shortcut = (keys: string) => {
@@ -288,9 +306,10 @@ export function createSlack(options: { call: Call }) {
     copyManifest,
     openBuilder,
     actions,
-    primary: () => actions()[0],
+    primary,
     shortcut,
-    context: () => notice() || (gate() ? "Install Raiden in your Slack to search it." : ""),
+    context: () =>
+      notice() || problem()?.text || (gate() ? "Install Raiden in your Slack to search it." : ""),
   };
 }
 

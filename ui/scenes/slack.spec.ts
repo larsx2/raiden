@@ -90,15 +90,21 @@ test.describe("results", () => {
     );
   });
 
-  test("Enter opens the selected conversation in Slack and hides the launcher", async ({
-    page,
-  }) => {
+  test("Enter opens the selected conversation in Slack", async ({ page }) => {
     await openSlack(page);
     await page.keyboard.press("Enter");
+    // slack_open validates the destination and hides the launcher natively.
     await expect
-      .poll(() => sent(page, "open_link"))
-      .toEqual([{ command: "open_link", args: { url: "slack://user?team=T1&id=U1" } }]);
-    await expect.poll(() => sent(page, "hide")).toHaveLength(1);
+      .poll(() => sent(page, "slack_open"))
+      .toEqual([{ command: "slack_open", args: { url: "slack://user?team=T1&id=U1" } }]);
+  });
+
+  test("⌘⌫ on an empty search signs out and returns to onboarding", async ({ page }) => {
+    await openSlack(page);
+    await page.keyboard.press("Meta+Backspace");
+    await expect.poll(() => sent(page, "slack_sign_out")).toHaveLength(1);
+    await expect(page.locator(".slack-gate")).toHaveCount(1);
+    await expect(page.locator("#q")).toHaveValue("");
   });
 });
 

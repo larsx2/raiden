@@ -457,9 +457,18 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
       slackHasToken = true;
       return slackView("") as T;
     }
+    case "slack_open":
+      return null as T;
     case "slack_sign_out":
       slackHasToken = false;
-      return null as T;
+      return {
+        hasToken: false,
+        hits: [],
+        problem: {
+          kind: "noToken",
+          text: "Raiden has no Slack token yet. Open Slack settings to paste your User OAuth Token.",
+        },
+      } as T;
     case "clipboard_thumb":
       return "/scenes/icons/shot.png" as T;
     case "clipboard_delete": {

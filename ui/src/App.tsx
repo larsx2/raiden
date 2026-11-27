@@ -1215,11 +1215,8 @@ export function App(props: {
       }
       clip.act();
     } else if (slk.open()) {
-      const opening = slk.gate() === null && slk.selectedHit();
+      // Opening a hit hides the launcher natively; saving a token keeps it open.
       slk.act();
-      if (opening) {
-        void props.call("hide");
-      }
     } else if (prefs.open()) {
       prefs.act();
     } else if (answering()) {

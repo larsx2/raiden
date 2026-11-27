@@ -2,14 +2,17 @@ use std::collections::HashMap;
 use std::io::Write as _;
 use std::os::unix::process::CommandExt as _;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{JoinHandle, sleep};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use objc2_app_kit::NSWorkspace;
+use objc2_foundation::{NSString, NSURL};
 use raiden_core::slack::{self, Hit, Names, Problem};
 use serde::Serialize;
 use serde_json::{Value, json};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 const CURL: &str = "/usr/bin/curl";
 const SECURITY: &str = "/usr/bin/security";
@@ -20,16 +23,24 @@ const CATALOG_FRESH: u64 = 300;
 const MESSAGES: usize = 20;
 const MOST: usize = 60;
 const PAGE: usize = 200;
-const PAGES: usize = 12;
+const PAGES: usize = 50;
 
-pub struct Slack {
+#[derive(Default)]
+struct Inner {
     catalog: Mutex<Option<Catalog>>,
     // The token read from the Keychain, kept so a keystroke does not fork
     // `security` every time. Cleared when it is saved or signed out.
     token: Mutex<Option<String>>,
     // Held while one catalog fetch runs, so a burst of cold searches does not
-    // each start their own three-call refresh.
+    // each start their own refresh.
     fetching: Mutex<()>,
+    // Bumped on every sign-in and sign-out, so a slow fetch or save started for
+    // an earlier account can tell it has been superseded and drop its result.
+    account: AtomicU64,
+}
+
+pub struct Slack {
+    inner: Arc<Inner>,
 }
 
 struct Entry {
@@ -46,12 +57,12 @@ struct Catalog {
 impl Slack {
     pub fn new() -> Self {
         Self {
-            catalog: Mutex::new(None),
-            token: Mutex::new(None),
-            fetching: Mutex::new(()),
+            inner: Arc::new(Inner::default()),
         }
     }
+}
 
+impl Inner {
     fn cached_token(&self) -> Option<String> {
         {
             let guard = self.token.lock().unwrap_or_else(|e| e.into_inner());
@@ -59,13 +70,14 @@ impl Slack {
                 return Some(token.clone());
             }
         }
+        let account = self.account.load(Ordering::SeqCst);
         let token = token()?;
-        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.clone());
+        let mut guard = self.token.lock().unwrap_or_else(|e| e.into_inner());
+        // Only cache it if no sign-out happened while the Keychain was read.
+        if guard.is_none() && self.account.load(Ordering::SeqCst) == account {
+            *guard = Some(token.clone());
+        }
         Some(token)
-    }
-
-    fn remember_token(&self, token: Option<String>) {
-        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = token;
     }
 }
 
@@ -106,63 +118,112 @@ impl SlackView {
     }
 }
 
+async fn blocking<T, F>(work: F) -> T
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .expect("the Slack worker did not panic")
+}
+
 #[tauri::command]
 pub async fn slack_manifest() -> Result<String, ()> {
     Ok(slack::MANIFEST.to_owned())
 }
 
 #[tauri::command]
-pub async fn slack_has_token() -> Result<bool, ()> {
-    Ok(token().is_some())
+pub async fn slack_has_token(state: State<'_, Slack>) -> Result<bool, ()> {
+    let inner = state.inner.clone();
+    Ok(blocking(move || inner.cached_token().is_some()).await)
 }
 
 #[tauri::command]
 pub async fn slack_search(state: State<'_, Slack>, query: String) -> Result<SlackView, ()> {
-    Ok(search(&state, &query))
+    let inner = state.inner.clone();
+    Ok(blocking(move || search(&inner, &query)).await)
 }
 
 #[tauri::command]
 pub async fn slack_save_token(state: State<'_, Slack>, token: String) -> Result<SlackView, ()> {
-    let token = token.trim().to_owned();
-    if !valid_token(&token) {
-        return Ok(SlackView::blocked(Problem::signed_out()));
-    }
-    Ok(match fetch_catalog(&token) {
-        Ok(catalog) => {
-            if store_token(&token).is_err() {
-                SlackView::blocked(Problem::failed("the Keychain would not keep the token"))
-            } else {
-                state.remember_token(Some(token));
-                *state.catalog.lock().unwrap_or_else(|e| e.into_inner()) = Some(catalog);
-                search(&state, "")
-            }
-        }
-        // The token never checked out, so keep onboarding open rather than
-        // claiming Raiden is signed in.
-        Err(problem) => SlackView::blocked(problem),
-    })
+    let inner = state.inner.clone();
+    Ok(blocking(move || save_token(&inner, token.trim())).await)
 }
 
 #[tauri::command]
-pub async fn slack_sign_out(state: State<'_, Slack>) -> Result<(), ()> {
-    forget_token();
-    state.remember_token(None);
-    *state.catalog.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    Ok(())
+pub async fn slack_sign_out(state: State<'_, Slack>) -> Result<SlackView, ()> {
+    let inner = state.inner.clone();
+    Ok(blocking(move || sign_out(&inner)).await)
 }
 
-fn search(state: &Slack, query: &str) -> SlackView {
-    let Some(token) = state.cached_token() else {
+#[tauri::command]
+pub async fn slack_open(app: AppHandle, url: String) -> Result<(), String> {
+    let link = safe_slack_link(&url)?.to_owned();
+    crate::hide_panel(&app);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let opened = NSURL::URLWithString(&NSString::from_str(&link))
+            .is_some_and(|parsed| NSWorkspace::sharedWorkspace().openURL(&parsed));
+        let _ = sender.send(opened);
+    })
+    .map_err(|error| error.to_string())?;
+    if receiver.recv_timeout(Duration::from_secs(5)) == Ok(true) {
+        Ok(())
+    } else {
+        Err(format!("macOS did not open {url}."))
+    }
+}
+
+fn save_token(inner: &Inner, token: &str) -> SlackView {
+    if !valid_token(token) {
+        return SlackView::blocked(Problem::signed_out());
+    }
+    let account = inner.account.fetch_add(1, Ordering::SeqCst) + 1;
+    let catalog = match fetch_catalog(token) {
+        Ok(catalog) => catalog,
+        // The token never checked out, so keep onboarding open rather than
+        // claiming Raiden is signed in.
+        Err(problem) => return SlackView::blocked(problem),
+    };
+    if store_token(token).is_err() {
+        return SlackView::blocked(Problem::failed("the Keychain would not keep the token"));
+    }
+    // A newer sign-in or sign-out since this one began must win.
+    if inner.account.load(Ordering::SeqCst) != account {
+        return SlackView::blocked(Problem::signed_out());
+    }
+    *inner.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.to_owned());
+    *inner.catalog.lock().unwrap_or_else(|e| e.into_inner()) = Some(catalog);
+    search(inner, "")
+}
+
+fn sign_out(inner: &Inner) -> SlackView {
+    inner.account.fetch_add(1, Ordering::SeqCst);
+    let gone = forget_token();
+    *inner.token.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *inner.catalog.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    if gone {
+        SlackView::signed_out()
+    } else {
+        // The Keychain still holds the token, so say so rather than pretend the
+        // next search will find nothing.
+        SlackView::blocked(Problem::failed("the Keychain would not drop the token"))
+    }
+}
+
+fn search(inner: &Inner, query: &str) -> SlackView {
+    let Some(token) = inner.cached_token() else {
         return SlackView::signed_out();
     };
-    if let Err(problem) = ensure_catalog(state, &token) {
+    if let Err(problem) = ensure_catalog(inner, &token) {
         return SlackView::problem(problem);
     }
     let needle = query.trim().to_lowercase();
     // Copy the name matches out while the lock is held, then release it so a
     // slow message search never blocks another keystroke's lookup.
     let mut hits: Vec<Hit> = {
-        let guard = state.catalog.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
         let Some(catalog) = guard.as_ref() else {
             return SlackView::problem(Problem::offline());
         };
@@ -177,7 +238,9 @@ fn search(state: &Slack, query: &str) -> SlackView {
             .collect()
     };
     let mut problem = None;
-    if slack::wants_messages(query) {
+    // Never send token-shaped text to the search endpoint: that would put a
+    // pasted token into curl's argv.
+    if slack::wants_messages(query) && !looks_like_token(query) {
         match get(&token, &messages_url(query)) {
             Ok(found) => match slack::check(&found, now()) {
                 Ok(()) => hits.extend(slack::messages(&found)),
@@ -197,28 +260,31 @@ fn search(state: &Slack, query: &str) -> SlackView {
     }
 }
 
-fn ensure_catalog(state: &Slack, token: &str) -> Result<(), Problem> {
-    let fresh = |state: &Slack| {
-        let guard = state.catalog.lock().unwrap_or_else(|e| e.into_inner());
+fn ensure_catalog(inner: &Inner, token: &str) -> Result<(), Problem> {
+    let fresh = || {
+        let guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().is_some_and(|catalog| {
             catalog.token == token && now().saturating_sub(catalog.fetched) < CATALOG_FRESH
         })
     };
-    if fresh(state) {
+    if fresh() {
         return Ok(());
     }
     // One fetch at a time: a burst of cold searches waits here, then finds the
     // catalog the first of them built instead of each hitting Slack.
-    let _fetching = state.fetching.lock().unwrap_or_else(|e| e.into_inner());
-    if fresh(state) {
+    let _fetching = inner.fetching.lock().unwrap_or_else(|e| e.into_inner());
+    if fresh() {
         return Ok(());
     }
+    let account = inner.account.load(Ordering::SeqCst);
     let catalog = fetch_catalog(token)?;
-    // Only replace a catalog still built for this token; a token change since
-    // the fetch began must win, or it would show the old account.
-    let mut guard = state.catalog.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.as_ref().is_none_or(|kept| kept.token == token) {
-        *guard = Some(catalog);
+    // Only install if the account has not changed and no newer catalog for a
+    // different token has arrived, or it would show the old workspace.
+    if inner.account.load(Ordering::SeqCst) == account {
+        let mut guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.as_ref().is_none_or(|kept| kept.token == token) {
+            *guard = Some(catalog);
+        }
     }
     Ok(())
 }
@@ -338,13 +404,21 @@ fn encode(text: &str) -> String {
 
 // A Slack user token is `xox?-` then digits, hyphens and letters. Checking it
 // before use keeps anything that could break out of curl's quoted config, or
-// of the Keychain, from ever being run.
+// of the Keychain, from ever being run. The upper bound stays within what the
+// Keychain tool accepts on stdin.
 fn valid_token(token: &str) -> bool {
-    token.starts_with("xox")
-        && (20..256).contains(&token.len())
+    looks_like_token(token)
+        && token.len() <= 200
         && token
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+// Anything a person might paste meaning to hand over a token, so it is kept out
+// of the search endpoint even before it is known to be well formed.
+fn looks_like_token(text: &str) -> bool {
+    let text = text.trim();
+    text.starts_with("xox") && text.len() >= 12
 }
 
 fn now() -> u64 {
@@ -372,7 +446,7 @@ fn token() -> Option<String> {
         return None;
     }
     let token = out.trim().to_owned();
-    (valid_token(&token)).then_some(token)
+    valid_token(&token).then_some(token)
 }
 
 fn store_token(token: &str) -> Result<(), Problem> {
@@ -398,22 +472,26 @@ fn store_token(token: &str) -> Result<(), Problem> {
     }
 }
 
+// Removes the token, reporting whether it is now gone (success, or already
+// absent); only a real deletion failure returns false.
 fn forget_token() -> bool {
-    matches!(
-        run(
-            SECURITY,
-            &[
-                "delete-generic-password",
-                "-s",
-                slack::KEYCHAIN_SERVICE,
-                "-a",
-                slack::KEYCHAIN_ACCOUNT,
-            ],
-            None,
-            KEYCHAIN,
-        ),
-        Some((0, _))
-    )
+    match run(
+        SECURITY,
+        &[
+            "delete-generic-password",
+            "-s",
+            slack::KEYCHAIN_SERVICE,
+            "-a",
+            slack::KEYCHAIN_ACCOUNT,
+        ],
+        None,
+        KEYCHAIN,
+    ) {
+        Some((0, _)) => true,
+        // Exit 44 is "item not found": nothing to remove is still signed out.
+        Some((44, _)) => true,
+        _ => token().is_none(),
+    }
 }
 
 fn get(token: &str, url: &str) -> Result<Value, Problem> {
@@ -453,6 +531,30 @@ fn get(token: &str, url: &str) -> Result<Value, Problem> {
         return Err(Problem::offline());
     }
     serde_json::from_str(&body).map_err(|_| Problem::failed("a reply that was not JSON"))
+}
+
+// Opens only a Slack destination: a slack:// channel or user link, or an
+// https Slack permalink. Anything else, or any whitespace or control
+// character, is refused before it reaches the opener.
+fn safe_slack_link(url: &str) -> Result<&str, String> {
+    let link = url.trim();
+    let clean = !link.chars().any(|c| c.is_whitespace() || c.is_control());
+    let allowed = match link.split_once("://") {
+        Some(("slack", rest)) => {
+            rest.starts_with("channel?") || rest.starts_with("user?") || rest.starts_with("team")
+        }
+        Some(("https", rest)) => rest
+            .split_once('/')
+            .is_some_and(|(host, _)| host == "slack.com" || host.ends_with(".slack.com")),
+        _ => false,
+    };
+    if clean && allowed {
+        Ok(link)
+    } else {
+        Err(format!(
+            "Raiden opens only Slack links, and {url} is not one."
+        ))
+    }
 }
 
 // Runs a short helper, optionally feeding stdin, and returns its exit code and
@@ -543,6 +645,25 @@ mod tests {
         assert!(!valid_token("xoxp-with spaces and \"quotes\""));
         assert!(!valid_token("xoxp-$(rm -rf)"));
         assert!(!valid_token("xox"));
+        assert!(!valid_token(&format!("xoxp-{}", "1".repeat(300))));
+    }
+
+    #[test]
+    fn a_pasted_token_is_kept_out_of_the_search_endpoint() {
+        assert!(looks_like_token("xoxp-123456789"));
+        assert!(!looks_like_token("standup notes"));
+        assert!(!looks_like_token("xox"));
+    }
+
+    #[test]
+    fn only_slack_destinations_open() {
+        assert!(safe_slack_link("slack://channel?team=T&id=C1").is_ok());
+        assert!(safe_slack_link("slack://user?team=T&id=U1").is_ok());
+        assert!(safe_slack_link("https://x.slack.com/archives/C1/p1").is_ok());
+        assert!(safe_slack_link("http://evil.com").is_err());
+        assert!(safe_slack_link("https://evil.com/slack").is_err());
+        assert!(safe_slack_link("slack://channel?id=C\n evil").is_err());
+        assert!(safe_slack_link("file:///etc/passwd").is_err());
     }
 
     #[test]

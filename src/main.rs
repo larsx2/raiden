@@ -489,6 +489,7 @@ fn launch(rows: Option<usize>, development: bool) {
             slack::slack_search,
             slack::slack_save_token,
             slack::slack_sign_out,
+            slack::slack_open,
             sizes::window_size,
             sizes::expand_window
         ])

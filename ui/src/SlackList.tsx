@@ -89,10 +89,17 @@ export function SlackList(props: { slack: Slack }): JSX.Element {
           fallback={
             <Show when={slack().loaded()}>
               <Show
-                when={slack().query().trim()}
-                fallback={<div class="none">Type to search people, channels and messages</div>}
+                when={slack().problem()}
+                fallback={
+                  <Show
+                    when={slack().query().trim()}
+                    fallback={<div class="none">Type to search people, channels and messages</div>}
+                  >
+                    {(query) => <NoMatch things="Slack results" typed={query()} />}
+                  </Show>
+                }
               >
-                {(query) => <NoMatch things="Slack results" typed={query()} />}
+                {(trouble) => <div class="none">{trouble().text}</div>}
               </Show>
             </Show>
           }
