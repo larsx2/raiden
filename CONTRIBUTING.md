@@ -102,7 +102,7 @@ be used again, a release caught this way needs a new version number. Turn on "En
 immutability" in Settings, General, Releases before the first tag. Collaborators can still edit a
 release's notes. A last job, which runs even when an earlier one fails or is cancelled, deletes
 any release on the tag that the workflow didn't make and check. Only a force-cancelled run skips
-it. The notes list the `feat` and `fix` commits since the previous release.
+it, and a re-run only reports a release it didn't make, so check who published it. The notes list the `feat` and `fix` commits since the previous release.
 
 To release:
 

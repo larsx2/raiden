@@ -218,16 +218,7 @@ jobs:
             echo "::error::$GITHUB_REF_NAME's release is not exactly the locked one this run made ($answer)."
             exit 1
           fi
-          echo "$MINE" > "$RUNNER_TEMP/release-id"
           echo "release=$MINE" >> "$GITHUB_OUTPUT"
-
-      - name: Remember the release this run made
-        if: always() && steps.verify.outputs.release != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-id
-          overwrite: true
-          path: ${{ runner.temp }}/release-id
 
   guard:
     needs: [release-check, build, sign]
@@ -236,37 +227,16 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-      actions: read
     steps:
-      - name: Find the release an earlier attempt made
-        id: earlier
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        continue-on-error: true
-        with:
-          name: release-id
-          path: ${{ runner.temp }}/earlier
-
       - name: Keep only the release this workflow made
         env:
           GH_TOKEN: ${{ github.token }}
           DRAFT: ${{ needs.sign.outputs.draft }}
-          VERIFIED: ${{ needs.sign.outputs.release }}
-          EARLIER: ${{ steps.earlier.outcome }}
+          OWN: ${{ needs.sign.outputs.release }}
         run: |
           releases="repos/$GITHUB_REPOSITORY/releases"
           tag="$GITHUB_REF_NAME"
-          if [ "$EARLIER" != success ]; then
-            count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=release-id" --jq .total_count)"
-            if [ "$count" != 0 ]; then
-              echo "::error::Could not read which release an earlier attempt made, so nothing is deleted."
-              exit 1
-            fi
-          fi
-          own="$VERIFIED"
-          if [ -z "$own" ] && [ -f "$RUNNER_TEMP/earlier/release-id" ]; then
-            own="$(cat "$RUNNER_TEMP/earlier/release-id")"
-          fi
-          if [ -n "$DRAFT" ] && [ "$DRAFT" != "$own" ]; then
+          if [ -n "$DRAFT" ] && [ "$DRAFT" != "$OWN" ]; then
             gh api -X DELETE "$releases/$DRAFT" > /dev/null 2>&1 || true
           fi
           if ! answer="$(gh api "$releases/tags/$tag" --jq '"\(.id) \(.immutable)"' 2>&1)"; then
@@ -274,15 +244,19 @@ jobs:
               echo "::error::GitHub could not say what $tag's release is: $answer"
               exit 1
             fi
-            if [ -n "$own" ]; then
+            if [ -n "$OWN" ]; then
               echo "::error::$tag's release was published, then removed by someone else."
               exit 1
             fi
             exit 0
           fi
           read -r id locked <<< "$answer"
-          if [ "$id" = "$own" ] && [ "$locked" = true ]; then
+          if [ "$id" = "$OWN" ] && [ "$locked" = true ]; then
             exit 0
+          fi
+          if [ -z "$OWN" ] && [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::$tag already has a release ($answer). A re-run deletes nothing, so check who published it."
+            exit 1
           fi
           gh api -X DELETE "$releases/$id" > /dev/null
           echo "::error::$tag had a release this workflow did not make and check ($answer), so it is deleted."
