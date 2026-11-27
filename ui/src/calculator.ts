@@ -3,16 +3,10 @@ const OPERATOR = /^[-+*/×÷x%^]$/;
 const LONGEST = 200;
 const DATE_OR_PHONE =
   /^(\d{4}([-/])\d{1,2}\2\d{1,2}|\d{1,2}([-/])\d{1,2}\3\d{4}|\+?(\d{1,3}-)?\d{3}-\d{3}-\d{4}|\+?\d{3}-\d{4})$/;
-// Answers that end are shown in full up to this many digits; others are
-// rounded to SHOWN digits, as 1/3 reads 0.333333333333333.
 const MOST_DIGITS = 30;
 const SHOWN = 15;
-// Answers closer to zero than 10^-SHOWN are too tiny to read.
 const TINY = 10n ** BigInt(SHOWN);
-// Past this many bits a number takes too long to work with on each keystroke,
-// so a power is worked out roughly instead and anything else has no answer.
 const MOST_BITS = 1024;
-// A double keeps about this many digits.
 const DOUBLE_DIGITS = 15;
 
 const tokensOf = (text: string): string[] | undefined => {
@@ -28,11 +22,6 @@ const tokensOf = (text: string): string[] | undefined => {
   return tokens;
 };
 
-// Every number is kept as an exact fraction, so 1000000.1 - 1000000 is 0.1
-// and 12345678901234567 - 12345678901234566 is 1, never a rounded double.
-// A power like 2^0.5, or one too big to work out exactly, is rough: `digits`
-// says how many of its leading digits can be trusted, and a subtraction that
-// cancels some of them leaves fewer. An exact number trusts every digit.
 type Value = { n: bigint; d: bigint; digits: number };
 
 class NoAnswer extends Error {}
@@ -116,7 +105,6 @@ const raise = (base: Value, power: Value): Value => {
   }
   const x = Number(base.n) / Number(base.d);
   const y = Number(power.n) / Number(power.d);
-  // A tiny error in x or y grows by |y ln x| in the result.
   const growth = Math.max(0, Math.log10(Math.abs(y * Math.log(Math.abs(x)))));
   return roughly(x ** y, Math.min(base.digits, power.digits, DOUBLE_DIGITS) - growth);
 };
@@ -202,8 +190,6 @@ const withPoint = (digits: bigint, places: number) => {
   return part ? `${whole}.${part}` : whole;
 };
 
-// A positive fraction written out in full, when its decimals end within
-// MOST_DIGITS digits.
 const inFull = (size: bigint, d: bigint): string | undefined => {
   let rest = d;
   let twos = 0;
@@ -218,9 +204,6 @@ const inFull = (size: bigint, d: bigint): string | undefined => {
   return text.replace(".", "").replace(/^0+/, "").length <= MOST_DIGITS ? text : undefined;
 };
 
-// An exact answer in full when it ends within MOST_DIGITS digits, else rounded
-// to SHOWN significant digits, or fewer when a rough answer trusts fewer, and
-// nothing when that rounding would hide the fraction or leave no digit.
 const shown = ({ n, d, digits }: Value): string | undefined => {
   const exact = digits === Infinity;
   const trusted = Math.min(SHOWN, Math.floor(digits));
