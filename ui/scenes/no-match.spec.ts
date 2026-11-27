@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const open = async (page: Page, fixture: string, extra = "") => {
   await page.goto(`/scene.html?fixture=${fixture}${extra}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
 };
 
 test("the main search says nothing matches, offers Tab for Ask AI, and Esc clears it", async ({

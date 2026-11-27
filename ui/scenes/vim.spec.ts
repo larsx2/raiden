@@ -7,7 +7,7 @@ const LAST_CLIP = "NSWindowCollectionBehavior.fullScreenAuxiliary";
 const openHistory = async (page: Page, vim: string) => {
   await page.clock.setFixedTime(new Date(SCENE_TIME));
   await page.goto(`/scene.html?fixture=clipboard${vim}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await expect(page.locator(".clip").first()).toBeVisible();
 };
 
@@ -42,7 +42,7 @@ const answerScroll = (page: Page) =>
 
 const openLongAnswer = async (page: Page, vim: string) => {
   await page.goto(`/scene.html?fixture=answer&moment=done&long=6${vim}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.locator(`#ai[data-phase="done"]`).waitFor();
   await page.evaluate(() => {
     const answer = document.querySelector<HTMLElement>("#ai");
@@ -95,7 +95,7 @@ const sent = (page: Page, command: string) =>
 test.describe("the Vim keys row in Settings", () => {
   test("typing vim finds it, and Enter turns it on and off at once", async ({ page }) => {
     await page.goto("/scene.html?fixture=settings");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".set.selected").waitFor();
     await page.keyboard.type("vim");
     await expect(page.locator(".set .name")).toHaveText(["Vim keys"]);
@@ -125,7 +125,7 @@ const badge = (page: Page) => page.locator("footer .nm");
 
 const openSearch = async (page: Page, more = "") => {
   await page.goto(`/scene.html?fixture=apps${more}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.locator(".row.selected").waitFor();
 };
 
@@ -369,7 +369,7 @@ const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void> }> = [
     name: "Settings",
     open: async (page) => {
       await page.goto("/scene.html?fixture=settings&vim=1");
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load");
       await page.locator(".set.selected").waitFor();
     },
   },
@@ -378,7 +378,7 @@ const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void> }> = [
     open: async (page) => {
       await page.clock.setFixedTime(new Date(SCENE_TIME));
       await page.goto("/scene.html?fixture=pulls&vim=1");
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load");
       await page.locator(".pr.selected").waitFor();
     },
   },
@@ -386,7 +386,7 @@ const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void> }> = [
     name: "Ask AI",
     open: async (page) => {
       await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load");
       await page.locator(`#ai[data-phase="done"]`).waitFor();
     },
   },
@@ -438,7 +438,7 @@ test.describe("Esc hides in one press more with Vim keys on", () => {
       const count = async (vim: string) => {
         await page.clock.setFixedTime(new Date(SCENE_TIME));
         await page.goto(`/scene.html?${screen.url}${vim}`);
-        await page.waitForLoadState("networkidle");
+        await page.waitForLoadState("load");
         await page.locator(screen.ready).first().waitFor();
         await page.keyboard.type(screen.typed);
         return pressesToHide(page);
@@ -471,7 +471,7 @@ test.describe("Normal in lists", () => {
     page,
   }) => {
     await page.goto("/scene.html?fixture=settings&vim=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".set.selected").waitFor();
     await toNormal(page);
     await page.keyboard.press("j");
@@ -489,7 +489,7 @@ test.describe("Normal in lists", () => {
   test("gt and gT switch Pull Requests tabs and stop at the first and last", async ({ page }) => {
     await page.clock.setFixedTime(new Date(SCENE_TIME));
     await page.goto("/scene.html?fixture=pulls&vim=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(".pr.selected").waitFor();
     const tab = page.locator(".sc.on");
     await toNormal(page);
@@ -534,7 +534,7 @@ test.describe("Normal in Ask AI", () => {
 
   test("Esc stops a streaming answer and the mode stays as it was", async ({ page }) => {
     await page.goto("/scene.html?fixture=answer&moment=streaming&vim=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(`#ai[data-phase="streaming"]`).waitFor();
     await page.keyboard.press("Escape");
     await expect.poll(async () => (await commandsSent(page)).includes("ai_stop")).toBe(true);
@@ -543,7 +543,7 @@ test.describe("Normal in Ask AI", () => {
 
   test("going back from an answer starts the main search in Insert", async ({ page }) => {
     await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.locator(`#ai[data-phase="done"]`).waitFor();
     await toNormal(page);
     await page.keyboard.press("Escape");
