@@ -96,7 +96,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if answer="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1)"; then
-            echo "::error::$GITHUB_REF_NAME already has a published release, so this run signs nothing."
+            if [ "$GITHUB_RUN_ATTEMPT" = 1 ]; then
+              touch "$RUNNER_TEMP/release-started"
+              echo "::error::$GITHUB_REF_NAME got a release before this workflow made one, so it is deleted."
+            else
+              echo "::error::$GITHUB_REF_NAME already has a published release, so this run signs nothing."
+            fi
             exit 1
           fi
           if ! printf '%s' "$answer" | grep -q "HTTP 404"; then
@@ -229,7 +234,7 @@ jobs:
           read -r id author locked <<< "$answer"
           held="$(gh api "$releases/$id/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")')"
           if [ "$id" = "$mine" ] && [ "$author" = "github-actions[bot]" ] && [ "$locked" = true ] \
-            && [ "$PUBLISHED" = success ] && [ "$held" = "$expected" ]; then
+            && [ "$held" = "$expected" ]; then
             exit 0
           fi
           gh api -X DELETE "$releases/$id" > /dev/null
