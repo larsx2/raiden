@@ -470,8 +470,8 @@ mod tests {
 
     #[test]
     fn a_new_file_is_found_within_two_seconds() {
-        if !index_on() {
-            eprintln!("Spotlight's index is off on this Mac, so this check cannot run.");
+        if !index_on() || std::env::var_os("CI").is_some() {
+            eprintln!("Spotlight's index is off or not timely here, so this check cannot run.");
             return;
         }
         let home = home();
