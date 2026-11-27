@@ -183,8 +183,8 @@ const evaluate = (tokens: string[]): Value => {
   return at === tokens.length ? answer : fail();
 };
 
-const withPoint = (digits: bigint, places: number) => {
-  const text = digits.toString().padStart(places + 1, "0");
+const withPoint = (scaled: bigint, places: number) => {
+  const text = scaled.toString().padStart(places + 1, "0");
   const whole = text.slice(0, text.length - places);
   const part = text.slice(text.length - places).replace(/0+$/, "");
   return part ? `${whole}.${part}` : whole;
