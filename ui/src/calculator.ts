@@ -71,6 +71,9 @@ const add = (a: Value, b: Value) => {
   if (total.digits === Infinity) {
     return total;
   }
+  if (total.n === 0n) {
+    return { ...total, digits: -Infinity };
+  }
   const lost = Math.max(0, Math.max(magnitude(a), magnitude(b)) - magnitude(total));
   return { ...total, digits: total.digits - lost };
 };
@@ -108,7 +111,8 @@ const raise = (base: Value, power: Value): Value => {
   const y = Number(power.n) / Number(power.d);
   const result = x ** y;
   const wholeY = wholePower && Number.isSafeInteger(y);
-  if ((x < 0 && !wholeY) || (result === 0 && x !== 0)) {
+  const lostBase = !Number.isFinite(x) || (x === 0 && base.n !== 0n);
+  if (lostBase || !Number.isFinite(y) || (x < 0 && !wholeY) || (result === 0 && x !== 0)) {
     return fail();
   }
   const spread = x === 0 ? 0 : Math.abs(y) * (1 + Math.abs(Math.log(Math.abs(x))));
@@ -214,7 +218,7 @@ const inFull = (size: bigint, d: bigint): string | undefined => {
 const shown = ({ n, d, digits }: Value): string | undefined => {
   const exact = digits === Infinity;
   const trusted = Math.min(SHOWN, Math.floor(digits));
-  if (trusted < 1) {
+  if (!(trusted >= 1)) {
     return undefined;
   }
   if (n === 0n) {
