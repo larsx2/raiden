@@ -19,8 +19,11 @@ concurrency:
 jobs:
   release-check:
     if: (github.event_name == 'push' && github.ref_type == 'tag') || github.ref == 'refs/heads/main'
-    runs-on: macos-15
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -40,19 +43,40 @@ jobs:
             exit 1
           fi
 
-      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5
-        with:
-          cache: false
-
-      - name: Check Cargo.lock matches Cargo.toml
+      - name: Check CI passed on main for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if ! mise x -- cargo metadata --locked --format-version 1 > /dev/null; then
-            echo "::error::Cargo.lock is out of date. Run mise x -- cargo check and commit it."
-            exit 1
-          fi
-
-      - run: mise run lint
-      - run: mise run test
+          runs="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main"
+          verdict='if any(.workflow_runs[]; .conclusion == "success") then "passed"
+            elif (.workflow_runs | length) == 0 then "missing"
+            elif any(.workflow_runs[]; .status != "completed") then "running"
+            else "failed" end'
+          wait=30
+          tries=80
+          missing_tries=10
+          for try in $(seq "$tries"); do
+            state="$(gh api "$runs" --jq "$verdict")" || state=unreachable
+            case "$state" in
+              passed)
+                echo "CI passed on main for $GITHUB_SHA."
+                exit 0
+                ;;
+              failed)
+                echo "::error::CI did not pass on main for $GITHUB_SHA."
+                exit 1
+                ;;
+              missing)
+                if [ "$try" -ge "$missing_tries" ]; then
+                  echo "::error::CI never ran on main for $GITHUB_SHA. Tag a commit that CI ran on."
+                  exit 1
+                fi
+                ;;
+            esac
+            sleep "$wait"
+          done
+          echo "::error::CI on main did not finish for $GITHUB_SHA within $((tries * wait / 60)) minutes."
+          exit 1
 
   build:
     needs: release-check
@@ -66,6 +90,13 @@ jobs:
       - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5
         with:
           cache: false
+
+      - name: Check Cargo.lock matches Cargo.toml
+        run: |
+          if ! mise x -- cargo metadata --locked --format-version 1 > /dev/null; then
+            echo "::error::Cargo.lock is out of date. Run mise x -- cargo check and commit it."
+            exit 1
+          fi
 
       - run: mise run setup
       - run: mise x -- sh scripts/release.sh build

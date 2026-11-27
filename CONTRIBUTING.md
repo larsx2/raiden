@@ -92,19 +92,21 @@ Leave out the scope for changes to the whole repository.
 
 ## Releases
 
-Pushing a version tag starts the `release` workflow. One job runs lint and tests, and another
-builds Raiden.app, both without any secrets. A third job, which runs no build code, signs the app
-with the Developer ID certificate, has Apple notarize the app and its disk image, and publishes
-`Raiden-arm64.dmg` and its SHA-256 checksum as a GitHub release. It publishes only a release it
-made itself, holding exactly the files it built, and only if GitHub locks the release once it is
-published. Otherwise it deletes the release and fails, and since a locked release's version can't
-be used again, a release caught this way needs a new version number. Turn on "Enable release
-immutability" in Settings, General, Releases before the first tag. Collaborators can still edit a
-release's notes. A last job, which runs even when an earlier one fails or is cancelled, deletes
-any release on the tag that the workflow didn't make and check. Only a force-cancelled run skips
-it, and a re-run only reports a release it didn't make, so check who published it. GitHub can't
-publish a release only if its files are unchanged, so a file a collaborator swaps into the draft
-in the moment before it is published stays up until the workflow deletes it, seconds later. The notes list the `feat` and `fix` commits since the previous release.
+Pushing a version tag starts the `release` workflow. One job checks that CI passed on `main` for the
+tagged commit, waiting for it if it is still running, and another builds Raiden.app. Neither holds
+any secrets. A third job, which runs no build code, signs the app with the Developer ID certificate,
+has Apple notarize the app and its disk image, and publishes `Raiden-arm64.dmg` and its SHA-256
+checksum as a GitHub release. It publishes only a release it made itself, holding exactly the files
+it built, and only if GitHub locks the release once it is published. Otherwise it deletes the
+release and fails, and since a locked release's version can't be used again, a release caught this
+way needs a new version number. Turn on "Enable release immutability" in Settings, General, Releases
+before the first tag. Collaborators can still edit a release's notes. A last job, which runs even
+when an earlier one fails or is cancelled, deletes any release on the tag that the workflow didn't
+make and check. Only a force-cancelled run skips it, and a re-run only reports a release it didn't
+make, so check who published it. GitHub can't publish a release only if its files are unchanged, so
+a file a collaborator swaps into the draft in the moment before it is published stays up until the
+workflow deletes it, seconds later. The notes list the `feat` and `fix` commits since the previous
+release.
 
 To release:
 
