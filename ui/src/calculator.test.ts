@@ -33,8 +33,30 @@ describe("calculate", () => {
     expect(calculate("0 * -1")).toBe("0");
     expect(calculate("1920x1080")).toBe("2073600");
     expect(calculate("500-100")).toBe("400");
-    expect(calculate("2^53-1")).toBe("9007199254740991");
+    expect(calculate("9007199254740990+1")).toBe("9007199254740991");
     expect(calculate("1234567890123456+1")).toBe("1234567890123457");
+    expect(calculate("99999999999999.5+0.25")).toBe("99999999999999.75");
+    expect(calculate("1000000.1-1000000")).toBe("0.1");
+    expect(calculate("1.00000000000001-1")).toBe("0.00000000000001");
+    expect(calculate("12345678901234567-12345678901234566")).toBe("1");
+    expect(calculate("2^60+1-2^60")).toBe("1");
+    expect(calculate("2^53-1")).toBe("9007199254740991");
+    expect(calculate("2^70")).toBe("1180591620717411303424");
+    expect(calculate("9007199254740991/2")).toBe("4503599627370495.5");
+    expect(calculate("4503599627370497-0.5")).toBe("4503599627370496.5");
+    expect(calculate("123456789012345+0.5")).toBe("123456789012345.5");
+    expect(calculate("9007199254740991%")).toBe("90071992547409.91");
+    expect(calculate("1.1^40")).toBe("45.259255568176");
+    expect(calculate("1^1000000000")).toBe("1");
+    expect(calculate("(-1)^1000000001")).toBe("-1");
+    expect(calculate("1-555-1234")).toBe("-1788");
+    expect(calculate("100-1000000")).toBe("-999900");
+    expect(calculate("(1+0.05/365)^365")).toBe("1.05126749646745");
+    expect(calculate("1.05^500")).toBe("39323261827.22");
+    expect(calculate("2^0.5*1000000000-1414213562")).toBe("0.3731");
+    expect(calculate("2^0.5-1")).toBe("0.4142135623731");
+    expect(calculate("1.50000000000000000000*2")).toBe("3");
+    expect(calculate("0.000000000000001*3")).toBe("0.000000000000003");
   });
 
   it("stays quiet for anything that is not arithmetic", () => {
@@ -58,9 +80,23 @@ describe("calculate", () => {
       "555-1234",
       "555-555-1234",
       "2 + 0x10",
-      "2^70",
       "2^-1074",
       "100+10%%",
+      "2^200",
+      "1.5^80",
+      "9^9^9",
+      "(-8)^0.5",
+      "0^-1",
+      "2^0.5-1.41421356237309",
+      "0.9^512*".repeat(24) + "1",
+      "50% %",
+      "12-31-2024",
+      "1/2/2024",
+      "2024/01/01",
+      "1-800-555-1234",
+      "+1-800-555-1234",
+      "0.30000000000000001-0.3",
+      "+555-1234",
       "-".repeat(20000) + "1",
     ]) {
       expect(calculate(text)).toBeUndefined();
