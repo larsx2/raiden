@@ -212,9 +212,12 @@ jobs:
           MINE: ${{ steps.publish.outputs.draft }}
         run: |
           releases="repos/$GITHUB_REPOSITORY/releases"
+          expected="$(for file in target/dist/*.dmg target/dist/*.sha256; do
+            echo "$(basename "$file") sha256:$(shasum -a 256 "$file" | cut -d ' ' -f 1) "
+          done | LC_ALL=C sort | paste -sd ',' -)"
           answer="$(gh api "$releases/tags/$GITHUB_REF_NAME" --jq '"\(.id) \(.author.login) \(.immutable)"')"
           held="$(gh api "$releases/$MINE/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")')"
-          if [ "$answer" != "$MINE github-actions[bot] true" ] || [ "$held" != "$(cat "$RUNNER_TEMP/expected-list")" ]; then
+          if [ "$answer" != "$MINE github-actions[bot] true" ] || [ -z "$held" ] || [ "$held" != "$expected" ]; then
             gh api -X DELETE "$releases/$MINE" > /dev/null 2>&1 || true
             echo "::error::$GITHUB_REF_NAME's release is not exactly the locked one this run made ($answer), so it is deleted."
             exit 1
@@ -238,7 +241,7 @@ jobs:
         run: |
           releases="repos/$GITHUB_REPOSITORY/releases"
           tag="$GITHUB_REF_NAME"
-          if [ -n "$DRAFT" ] && [ "$DRAFT" != "$OWN" ]; then
+          if [ -n "$DRAFT" ] && [ "$DRAFT" != "$OWN" ] && [ "$SIGNED" != success ]; then
             gh api -X DELETE "$releases/$DRAFT" > /dev/null 2>&1 || true
           fi
           if ! answer="$(gh api "$releases/tags/$tag" --jq '"\(.id) \(.immutable)"' 2>&1)"; then
