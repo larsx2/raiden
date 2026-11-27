@@ -31,6 +31,8 @@ describe("calculate", () => {
     expect(calculate("100 + 2^10%")).toBe("101.071773462536");
     expect(calculate("0.0000001*2")).toBe("0.0000002");
     expect(calculate("0 * -1")).toBe("0");
+    expect(calculate("1920x1080")).toBe("2073600");
+    expect(calculate("500-100")).toBe("400");
     expect(calculate("2^53-1")).toBe("9007199254740991");
     expect(calculate("1234567890123456+1")).toBe("1234567890123457");
   });
@@ -54,6 +56,8 @@ describe("calculate", () => {
       "0x10",
       "2024-01-01",
       "555-1234",
+      "555-555-1234",
+      "2 + 0x10",
       "2^70",
       "2^-1074",
       "100+10%%",

@@ -2,7 +2,7 @@ const TOKEN = /\s*(\d+\.?\d*|\.\d+|[-+*/×÷x%^()])\s*/y;
 const OPERATOR = /^[-+*/×÷x%^]$/;
 const LONGEST = 200;
 const SMALLEST = 1e-15;
-const DATE_OR_PHONE = /^(\d{4}-\d{1,2}-\d{1,2}|\d{3}-\d{3,4}(-\d{4})?)$/;
+const DATE_OR_PHONE = /^(\d{4}-\d{1,2}-\d{1,2}|\d{3}-\d{3}-\d{4}|\d{3}-\d{4})$/;
 
 const tokensOf = (text: string): string[] | undefined => {
   const tokens: string[] = [];
@@ -92,7 +92,7 @@ const evaluate = (tokens: string[]): number => {
 };
 
 export function calculate(text: string): string | undefined {
-  if (text.length > LONGEST || /0x|%%/i.test(text) || DATE_OR_PHONE.test(text.trim())) {
+  if (text.length > LONGEST || /(^|[^\d.])0x|%%/i.test(text) || DATE_OR_PHONE.test(text.trim())) {
     return undefined;
   }
   const tokens = tokensOf(text);
