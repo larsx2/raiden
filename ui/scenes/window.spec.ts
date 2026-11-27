@@ -135,6 +135,7 @@ test.describe("the expanded size", () => {
     await expect(page.locator("#actions .act-t")).toHaveText([
       "Open",
       "Show in Finder",
+      "Quick Look",
       "Copy path",
       "Expand Window",
     ]);

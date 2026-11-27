@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { appActions, filterActions, matchesInOrder } from "./actions";
+import { QUICK_LOOK_KEYS, appActions, filterActions, matchesInOrder } from "./actions";
 
 const handlers = () => ({ open: vi.fn(), showInFinder: vi.fn(), copyPath: vi.fn() });
 
@@ -18,6 +18,20 @@ describe("app actions", () => {
     expect(h.open).toHaveBeenCalledOnce();
     expect(h.showInFinder).toHaveBeenCalledWith("/Applications/Safari.app");
     expect(h.copyPath).toHaveBeenCalledWith("/Applications/Safari.app");
+  });
+
+  it("adds Quick Look on ⌘Y after Show in Finder when it can preview, keeping the menu open", () => {
+    const quickLook = vi.fn();
+    const actions = appActions({ path: "/Users/me/notes.md" }, { ...handlers(), quickLook });
+    expect(actions.map((action) => [action.title, action.keys, action.hides])).toEqual([
+      ["Open", "↵", true],
+      ["Show in Finder", "⌘ ↵", true],
+      ["Quick Look", QUICK_LOOK_KEYS, false],
+      ["Copy path", "⌘ ⇧ C", false],
+    ]);
+    expect(QUICK_LOOK_KEYS).toBe("⌘ Y");
+    actions[2]?.run();
+    expect(quickLook).toHaveBeenCalledWith("/Users/me/notes.md");
   });
 
   it("keeps the actions whose names hold the typed letters in order", () => {

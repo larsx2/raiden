@@ -346,20 +346,21 @@ test.describe("typing right after the hotkey", () => {
 
 const QUIET_KEYS = [..."bcdefhlmnopqrstuvwxyz0123456789-=[];',.`\\", "Space"];
 
-const pressQuietKeys = async (page: Page) => {
-  for (const key of QUIET_KEYS) {
+const pressQuietKeys = async (page: Page, previews = false) => {
+  for (const key of QUIET_KEYS.filter((quiet) => !previews || quiet !== "Space")) {
     await page.keyboard.press(key);
     await page.keyboard.press(`Shift+${key}`);
   }
 };
 
-const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void> }> = [
+const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void>; previews?: boolean }> = [
   {
     name: "the main search",
     open: async (page) => {
       await openSearch(page, "&vim=1");
       await page.keyboard.type("s");
     },
+    previews: true,
   },
   {
     name: "Clipboard history",
@@ -401,12 +402,53 @@ test.describe("Normal takes no text", () => {
       await toNormal(page);
       const field = await page.locator("#q").inputValue();
       const before = await commandsSent(page);
-      await pressQuietKeys(page);
+      await pressQuietKeys(page, screen.previews);
       await expect(page.locator("#q")).toHaveValue(field);
       expect(await commandsSent(page)).toEqual(before);
       await expect(badge(page)).toHaveText("NORMAL");
     });
   }
+});
+
+test("Space in Normal previews the selected app with Quick Look and closes it again", async ({
+  page,
+}) => {
+  await SCREENS[0]?.open(page);
+  await toNormal(page);
+  const field = await page.locator("#q").inputValue();
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Space");
+  await expect(page.locator("#q")).toHaveValue(field);
+  const looked = await page.evaluate(() =>
+    window.sent.filter((call) => call.command === "quick_look").map((call) => call.args),
+  );
+  expect(looked).toHaveLength(1);
+  expect(looked[0]?.["follow"]).toBe(false);
+  expect(String(looked[0]?.["path"])).toMatch(/^\/.*\.app$/);
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sent.filter((call) => call.command === "close_quick_look").length),
+    )
+    .toBe(1);
+});
+
+test("Normal mode stays Normal while Quick Look takes the keyboard and gives it back", async ({
+  page,
+}) => {
+  await SCREENS[0]?.open(page);
+  await toNormal(page);
+  await page.keyboard.press("Space");
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sent.filter((call) => call.command === "quick_look").length),
+    )
+    .toBe(1);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page.waitForTimeout(400);
+  await expect(badge(page)).toHaveText("NORMAL");
 });
 
 const pressesToHide = async (page: Page) => {

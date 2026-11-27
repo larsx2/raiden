@@ -21,6 +21,8 @@ export type PanelView = {
   waiting?: boolean;
   movable?: boolean;
   early?: boolean;
+  browsing?: boolean;
+  previewing?: boolean;
 };
 
 export type PanelActions = {
@@ -43,6 +45,8 @@ export type PanelActions = {
   line: (step: 1 | -1) => void;
   edge: (last: boolean) => void;
   tab: (step: 1 | -1) => void;
+  preview: () => boolean;
+  closePreview: () => void;
 };
 
 export function shortcutOf(event: Keystroke): string {
@@ -117,6 +121,33 @@ function vimPage(event: Keystroke, view: PanelView): 1 | -1 | undefined {
     return undefined;
   }
   return VIM_PAGES[event.key.toLowerCase()];
+}
+
+const onlyMeta = (event: Keystroke) =>
+  event.metaKey === true &&
+  event.ctrlKey !== true &&
+  event.altKey !== true &&
+  event.shiftKey !== true;
+
+const noModifiers = (event: Keystroke) =>
+  event.metaKey !== true && event.ctrlKey !== true && event.altKey !== true;
+
+function quickLook(event: Keystroke, view: PanelView, actions: PanelActions): boolean | undefined {
+  if (view.menu || inside(view)) {
+    return undefined;
+  }
+  if (view.previewing === true && (event.key === "Escape" || vimEscape(event, view))) {
+    actions.closePreview();
+    return true;
+  }
+  if (onlyMeta(event) && event.key.toLowerCase() === "y") {
+    return event.repeat === true || actions.preview();
+  }
+  const previews = view.browsing === true || vimNormal(view);
+  if (event.key !== " " || !noModifiers(event) || !previews) {
+    return undefined;
+  }
+  return event.repeat === true || actions.preview() ? true : undefined;
 }
 
 function stepBackInMenu(view: PanelView, actions: PanelActions): void {
@@ -228,6 +259,10 @@ export function handleKey(event: Keystroke, view: PanelView, actions: PanelActio
   if (event.metaKey === true && event.key.toLowerCase() === "k") {
     actions.toggleMenu();
     return true;
+  }
+  const looked = quickLook(event, view, actions);
+  if (looked !== undefined) {
+    return looked;
   }
   const paging = vimPage(event, view);
   if (paging !== undefined) {

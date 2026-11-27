@@ -21,6 +21,8 @@ const actions = () => ({
   line: vi.fn(),
   edge: vi.fn(),
   tab: vi.fn(),
+  preview: vi.fn(() => true),
+  closePreview: vi.fn(),
 });
 const list = { menu: false, pressing: false, search: "", held: "" };
 const menu = { menu: true, pressing: false, search: "", held: "" };
@@ -321,5 +323,75 @@ describe("⌃D and ⌃U", () => {
     handleKey({ key: "u", ctrlKey: true }, { ...menu, vim: true }, a);
     expect(a.page).not.toHaveBeenCalled();
     expect(a.shortcut.mock.calls).toEqual([["⌃ D"], ["⌃ U"]]);
+  });
+});
+
+describe("Quick Look", () => {
+  const browsing = { ...list, search: "release", browsing: true };
+
+  it("Space types a space while typing", () => {
+    const a = actions();
+    expect(handleKey({ key: " " }, { ...list, search: "release" }, a)).toBe(false);
+    expect(a.preview).not.toHaveBeenCalled();
+  });
+
+  it("Space previews once ↓ moved the selection into the results", () => {
+    const a = actions();
+    expect(handleKey({ key: "ArrowDown" }, { ...list, search: "release" }, a)).toBe(true);
+    expect(a.move).toHaveBeenCalledWith(1);
+    expect(handleKey({ key: " " }, browsing, a)).toBe(true);
+    expect(a.preview).toHaveBeenCalledOnce();
+  });
+
+  it("Space types a space on a row it cannot preview", () => {
+    const a = { ...actions(), preview: vi.fn(() => false) };
+    expect(handleKey({ key: " " }, browsing, a)).toBe(false);
+  });
+
+  it("⌘Y always previews, typing or not, once per press", () => {
+    const a = actions();
+    expect(handleKey({ key: "y", metaKey: true }, { ...list, search: "release" }, a)).toBe(true);
+    expect(handleKey({ key: "y", metaKey: true }, browsing, a)).toBe(true);
+    expect(handleKey({ key: "y", metaKey: true, repeat: true }, browsing, a)).toBe(true);
+    expect(a.preview).toHaveBeenCalledTimes(2);
+    expect(a.shortcut).not.toHaveBeenCalled();
+  });
+
+  it("⌘Y in the actions menu runs the menu's Quick Look", () => {
+    const a = actions();
+    expect(handleKey({ key: "y", metaKey: true }, menu, a)).toBe(true);
+    expect(a.preview).not.toHaveBeenCalled();
+    expect(a.shortcut).toHaveBeenCalledWith("⌘ Y");
+  });
+
+  it("a letter typed after moving types it, and then Space types a space again", () => {
+    const a = actions();
+    expect(handleKey({ key: "n" }, browsing, a)).toBe(false);
+    expect(handleKey({ key: " " }, { ...list, search: "releasen" }, a)).toBe(false);
+    expect(a.preview).not.toHaveBeenCalled();
+  });
+
+  it("Space closes an open preview while browsing but types while typing, and Escape only closes it", () => {
+    const a = actions();
+    const typing = { ...list, search: "release", previewing: true };
+    expect(handleKey({ key: " " }, typing, a)).toBe(false);
+    expect(a.preview).not.toHaveBeenCalled();
+    expect(handleKey({ key: " " }, { ...typing, browsing: true }, a)).toBe(true);
+    expect(a.preview).toHaveBeenCalledOnce();
+    expect(handleKey({ key: "Escape" }, typing, a)).toBe(true);
+    expect(a.closePreview).toHaveBeenCalledOnce();
+    expect(a.clear).not.toHaveBeenCalled();
+    expect(a.hide).not.toHaveBeenCalled();
+  });
+
+  it("Space with a modifier, held Space, and other screens leave Quick Look alone", () => {
+    const a = actions();
+    expect(handleKey({ key: " ", shiftKey: true }, browsing, a)).toBe(true);
+    expect(handleKey({ key: " ", repeat: true }, browsing, a)).toBe(true);
+    expect(handleKey({ key: " ", altKey: true }, browsing, a)).toBe(false);
+    expect(handleKey({ key: " " }, { ...menu, browsing: true }, a)).toBe(false);
+    expect(handleKey({ key: " " }, { ...list, answer: true, previewing: true }, a)).toBe(false);
+    expect(handleKey({ key: "y", metaKey: true }, { ...list, settings: true }, a)).toBe(true);
+    expect(a.preview).toHaveBeenCalledOnce();
   });
 });

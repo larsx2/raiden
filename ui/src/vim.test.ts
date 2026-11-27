@@ -22,6 +22,8 @@ const actions = () => ({
   line: vi.fn(),
   edge: vi.fn(),
   tab: vi.fn(),
+  preview: vi.fn(() => true),
+  closePreview: vi.fn(),
 });
 
 type Actions = ReturnType<typeof actions>;
@@ -191,7 +193,7 @@ describe("Normal", () => {
   });
 
   it("takes no text: every other letter, digit and symbol does nothing", () => {
-    for (const key of [..."bcdefhlmnopqrsuvwxyz0123456789 .,;'[]-=`\\", "Dead"]) {
+    for (const key of [..."bcdefhlmnopqrsuvwxyz0123456789.,;'[]-=`\\", "Dead"]) {
       expect(press(key, normal()), key).toEqual({ handled: true, calls: [] });
       const shifted = key === "Dead" ? key : key.toUpperCase();
       expect(press(shifted, normal(), { shiftKey: true }), key).toEqual({
@@ -283,5 +285,23 @@ describe("Pull Requests tabs", () => {
     expect(tabAfter("drafts", 1)).toBe("drafts");
     expect(tabAfter("all", -1)).toBe("all");
     expect(tabAfter("ready", -1)).toBe("failing");
+  });
+});
+
+describe("Quick Look in Normal mode", () => {
+  it("Space previews without moving first, and types nothing when there is no preview", () => {
+    const a = actions();
+    expect(handleKey({ key: " " }, normal(), a)).toBe(true);
+    expect(a.preview).toHaveBeenCalledOnce();
+    const none = { ...actions(), preview: vi.fn(() => false) };
+    expect(handleKey({ key: " " }, normal(), none)).toBe(true);
+  });
+
+  it("Space types a space in Insert mode until j or k move the selection", () => {
+    const a = actions();
+    expect(handleKey({ key: " " }, insert({ search: "release" }), a)).toBe(false);
+    expect(handleKey({ key: "j" }, normal(), a)).toBe(true);
+    expect(a.line).toHaveBeenCalledWith(1);
+    expect(a.preview).not.toHaveBeenCalled();
   });
 });
