@@ -61,7 +61,7 @@ export function shortcutOf(event: Keystroke): string {
 const inside = (view: PanelView) =>
   view.answer === true || view.settings === true || view.clipboard === true || view.pulls === true;
 
-const COMPOSING = 229;
+export const COMPOSING = 229;
 const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn", "OS"]);
 const TO_INSERT = new Set(["i", "a", "/"]);
 const ONE_SHOT = new Set([...TO_INSERT, "g"]);
@@ -226,13 +226,7 @@ export function handleKey(event: Keystroke, view: PanelView, actions: PanelActio
   if (waiting) {
     actions.wait(false);
   }
-  if (
-    view.answer === true &&
-    vimNormal(view) &&
-    !waiting &&
-    event.keyCode !== COMPOSING &&
-    actions.edit(event)
-  ) {
+  if (view.answer === true && vimNormal(view) && !waiting && actions.edit(event)) {
     return true;
   }
   if (event.metaKey === true && event.key.toLowerCase() === "k") {

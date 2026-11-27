@@ -47,7 +47,7 @@ import {
   type FileRow,
 } from "./files";
 import { createFrameWatcher } from "./frames";
-import { handleKey, stepsBack, switchesToInsert, type Keystroke } from "./keys";
+import { COMPOSING, handleKey, stepsBack, switchesToInsert, type Keystroke } from "./keys";
 import {
   pieces,
   sectionsOf,
@@ -1371,6 +1371,10 @@ export function App(props: {
         return false;
       }
       const pending = editor.keys.length > 0;
+      if (event.keyCode === COMPOSING || event.key === "Dead") {
+        editor = { ...editor, keys: [] };
+        return pending;
+      }
       const usable =
         event.metaKey !== true &&
         event.ctrlKey !== true &&
@@ -1504,7 +1508,7 @@ export function App(props: {
       return (
         (phase !== null && phase !== "waiting" && phase !== "signin" && phase !== "signing") ||
         query() !== "" ||
-        editor.opened !== undefined ||
+        (editor.opened !== undefined && editor.opened.text !== query()) ||
         editor.undo.length > 0
       );
     }

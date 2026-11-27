@@ -689,6 +689,16 @@ test.describe("editing the question in Ask AI", () => {
     await expect.poll(scrolled).toBeGreaterThan(500);
   });
 
+  test("a first question typed and erased leaves Ask AI on one Esc", async ({ page }) => {
+    await openSearch(page, "&vim=1");
+    await page.keyboard.press("Tab");
+    await expect(page.locator("#q")).toHaveAttribute("placeholder", "Ask a follow-up");
+    await page.keyboard.type("x");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#q")).not.toHaveAttribute("placeholder", "Ask a follow-up");
+  });
+
   test("u takes back typing that began with a click", async ({ page }) => {
     await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
     await page.waitForLoadState("load");

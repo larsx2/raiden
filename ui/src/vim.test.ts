@@ -301,6 +301,12 @@ describe("editing the question in Ask AI", () => {
     expect(a.edit).toHaveBeenCalledTimes(1);
   });
 
+  it("hands keys typed through an input method to the question too, so it can drop a waiting f", () => {
+    const a = actions();
+    handleKey({ key: "Process", keyCode: 229 }, normal({ answer: true }), a);
+    expect(a.edit).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves a key the question turns down to Normal's own keys", () => {
     const a = actions();
     expect(handleKey({ key: "j" }, normal({ answer: true }), a)).toBe(true);
