@@ -36,8 +36,7 @@ ditto "$built" "$apps/.Raiden.app.installing"
 rm -rf "$apps/Raiden.app"
 mv "$apps/.Raiden.app.installing" "$apps/Raiden.app"
 ln -sf "$apps/Raiden.app/Contents/MacOS/Raiden" "$HOME/.local/bin/raiden"
-pkill -x Raiden || true
-open "$apps/Raiden.app"
+sh scripts/restart.sh "$apps/Raiden.app"
 echo "Installed ~/Applications/Raiden.app, and raiden in ~/.local/bin."
 """
 
@@ -64,6 +63,7 @@ run = [
   "pnpm --dir ui exec playwright install webkit",
   "pnpm --dir ui run test:scenes",
   "cargo test --workspace",
+  "sh scripts/restart.test.sh",
 ]
 
 [tasks.lint]
