@@ -1218,6 +1218,19 @@ mod tests {
     }
 
     #[test]
+    fn installed_python_packages_are_not_read() {
+        let home = Home::new("python-packages");
+        home.file("app/.venv/lib/python3.12/site-packages/requests/api.py");
+        home.file("app/venv/lib/python3.12/site-packages/numpy/core.py");
+        home.file("usr/lib/python3/dist-packages/apt/cache.py");
+        home.file("app/src/api_client.py");
+        let names = Names::build(home.path());
+        assert!(found(&names, "core.py").is_empty());
+        assert!(found(&names, "cache.py").is_empty());
+        assert_eq!(found(&names, "api_client"), ["app/src/api_client.py"]);
+    }
+
+    #[test]
     fn folders_spotlight_is_told_to_skip_are_not_read() {
         let home = Home::new("never-index");
         home.file("Taxes.noindex/2026-return.pdf");

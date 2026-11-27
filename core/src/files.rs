@@ -21,9 +21,11 @@ const PACKAGES: [&str; 12] = [
     "xcworkspace",
     "xpc",
 ];
-const NOISE: [&str; 6] = [
+const NOISE: [&str; 8] = [
     "node_modules",
     "__pycache__",
+    "site-packages",
+    "dist-packages",
     "Caches",
     "DerivedData",
     "Pods",
@@ -120,6 +122,7 @@ pub fn listed(name: &str, at_home: bool) -> bool {
 /// use raiden_core::files::opened;
 /// assert!(opened("src"));
 /// assert!(!opened("node_modules"));
+/// assert!(!opened("site-packages"));
 /// assert!(!opened("Raiden.app"));
 /// assert!(!opened("Private.noindex"));
 /// ```
