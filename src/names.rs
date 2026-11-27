@@ -4,7 +4,8 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Write as _};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use core_foundation::array::{CFArray, CFArrayRef};
@@ -70,8 +71,17 @@ unsafe extern "C" {
     fn CFUUIDCreateString(allocator: CFAllocatorRef, uuid: CFTypeRef) -> CFStringRef;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    Ready,
+    Folder(PathBuf),
+    Lost(PathBuf),
+    Added(PathBuf),
+    Removed(PathBuf),
+}
+
 #[derive(Default)]
-pub struct Index(RwLock<Option<Names>>);
+pub struct Index(RwLock<Option<Names>>, Mutex<Vec<Sender<Change>>>);
 
 pub struct Lookup {
     pub hits: Vec<Hit>,
@@ -98,7 +108,43 @@ impl Index {
     }
 
     fn set(&self, names: Option<Names>) {
+        let ready = names.is_some();
         *self.0.write().unwrap_or_else(PoisonError::into_inner) = names;
+        if ready {
+            self.tell(&Change::Ready);
+        }
+    }
+
+    pub fn listen(&self) -> Receiver<Change> {
+        let (sender, changes) = channel();
+        self.1
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(sender);
+        changes
+    }
+
+    fn tell(&self, change: &Change) {
+        self.1
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|listener| listener.send(change.clone()).is_ok());
+    }
+
+    pub fn ready(&self) -> bool {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+
+    pub fn files(&self) -> Vec<String> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(Names::files)
+            .unwrap_or_default()
     }
 
     fn refresh(&self, path: &Path, deep: Option<SystemTime>) -> bool {
@@ -109,8 +155,41 @@ impl Index {
                 None => return false,
             }
         };
-        let mut names = self.0.write().unwrap_or_else(PoisonError::into_inner);
-        names.as_mut().is_some_and(|names| names.apply(changes))
+        let (changed, added, removed) = {
+            let mut names = self.0.write().unwrap_or_else(PoisonError::into_inner);
+            match names.as_mut() {
+                Some(names) => {
+                    let changed = names.apply(changes);
+                    (changed, names.take_added(), names.take_removed())
+                }
+                None => return false,
+            }
+        };
+        for folder in removed {
+            self.tell(&Change::Removed(PathBuf::from(folder)));
+        }
+        for folder in added {
+            self.tell(&Change::Added(PathBuf::from(folder)));
+        }
+        changed
+    }
+
+    pub fn files_in(&self, folder: &Path) -> Vec<String> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|names| names.files_in(folder))
+            .unwrap_or_default()
+    }
+
+    pub fn files_under(&self, folder: &Path) -> Vec<String> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|names| names.files_under(folder))
+            .unwrap_or_default()
     }
 
     fn save(&self, stamp: &Stamp, to: &Path) {
@@ -300,6 +379,10 @@ impl Watch {
         };
         for (path, deep) in merged(events, &self.home, &root_path, lost_since) {
             self.changed |= self.index.refresh(&path, deep);
+            self.index.tell(&match deep {
+                Some(_) => Change::Lost(path),
+                None => Change::Folder(path),
+            });
         }
         self.heard_at[root.at()] = heard_at;
         if self.changed && self.saved_at.elapsed() >= SAVED_AT_MOST_EVERY {
@@ -496,9 +579,15 @@ pub fn real_home(home: &str) -> String {
         .unwrap_or_else(|| home.trim_end_matches('/').to_owned())
 }
 
+#[cfg(test)]
 pub fn start(home: &str, state: &Path) -> Arc<Index> {
     let index = Arc::new(Index::default());
-    let kept = Arc::clone(&index);
+    begin(&index, home, state);
+    index
+}
+
+pub fn begin(index: &Arc<Index>, home: &str, state: &Path) {
+    let kept = Arc::clone(index);
     let home = real_home(home);
     let saved_to = state.join("names.idx");
     let started = std::thread::Builder::new()
@@ -507,7 +596,6 @@ pub fn start(home: &str, state: &Path) -> Arc<Index> {
     if let Err(error) = started {
         eprintln!("Raiden could not start its file index: {error}");
     }
-    index
 }
 
 #[cfg(test)]
@@ -1030,5 +1118,29 @@ mod tests {
         };
         write(&Names::build(&home), &stamp, &saved).unwrap();
         assert!(read(&saved, &home, "A").is_none());
+    }
+
+    #[test]
+    fn listeners_hear_when_the_index_is_ready_and_which_folders_changed() {
+        let scratch = Scratch::new("listen");
+        scratch.file("Documents/a.txt");
+        let home = scratch.home();
+        let mut watch = watch(&home);
+        let changes = watch.index.listen();
+        watch.index.set(Some(Names::build(&home)));
+        assert!(watch.index.ready());
+        assert_eq!(watch.index.files().len(), 1);
+        let documents = format!("{home}/Documents");
+        watch.took_in(Root::Home, &[(documents.clone(), 0, 7)]);
+        watch.took_in(Root::Home, &[(documents.clone(), MUST_SCAN_SUBDIRS, 8)]);
+        let heard: Vec<Change> = changes.try_iter().collect();
+        assert_eq!(
+            heard,
+            [
+                Change::Ready,
+                Change::Folder(PathBuf::from(&documents)),
+                Change::Lost(PathBuf::from(&documents)),
+            ]
+        );
     }
 }
