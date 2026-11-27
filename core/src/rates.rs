@@ -12,10 +12,7 @@ pub fn fixer_key(text: &str) -> Result<String, String> {
     if key.len() == 32 && key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         Ok(key.to_ascii_lowercase())
     } else {
-        Err(
-            "Copy a Fixer API key first: 32 letters and digits from fixer.io's dashboard"
-                .to_owned(),
-        )
+        Err("Copy a Fixer API key first: the 32 hex characters on fixer.io's dashboard".to_owned())
     }
 }
 

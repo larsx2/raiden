@@ -14,7 +14,7 @@ const UNITS: Record<string, [string, number, string[]][]> = {
     ["ft", 0.3048, ["foot", "feet", "'"]],
     ["yd", 0.9144, ["yard", "yards"]],
     ["mi", 1609.344, ["mile", "miles"]],
-    ["nmi", 1852, ["nautical mile", "nautical miles", "nm"]],
+    ["nmi", 1852, ["nautical mile", "nautical miles"]],
   ],
   weight: [
     ["mg", 1e-6, ["milligram", "milligrams"]],
@@ -121,53 +121,91 @@ const CURRENCY_NAMES: Record<string, string> = {
   pesos: "MXN",
 };
 
-const LOOKUP = new Map<string, Unit>();
+const EXACT = new Map<string, Unit>();
+const FOLDED = new Map<string, Unit | null>();
+const add = (name: string, unit: Unit) => {
+  EXACT.set(name, unit);
+  const folded = name.toLowerCase();
+  const before = FOLDED.get(folded);
+  FOLDED.set(folded, before === undefined || before?.symbol === unit.symbol ? unit : null);
+};
 for (const [kind, units] of Object.entries(UNITS)) {
   for (const [symbol, factor, names] of units) {
     for (const name of [symbol, ...names]) {
-      LOOKUP.set(name, { kind, symbol, factor });
-      LOOKUP.set(name.toLowerCase(), LOOKUP.get(name.toLowerCase()) ?? { kind, symbol, factor });
+      add(name, { kind, symbol, factor });
     }
   }
 }
 for (const [symbol, factor, offset, names] of TEMPERATURES) {
   for (const name of [symbol, symbol.replace("°", ""), ...names]) {
-    LOOKUP.set(name.toLowerCase(), { kind: "temperature", symbol, factor, offset });
+    add(name, { kind: "temperature", symbol, factor, offset });
   }
 }
 
+const oneCase = (name: string) => name === name.toLowerCase() || name === name.toUpperCase();
+
 const unitOf = (name: string, rates: Rates): Unit | undefined => {
-  const exact = LOOKUP.get(name) ?? LOOKUP.get(name.toLowerCase());
-  if (exact) {
-    return exact;
+  const known = EXACT.get(name) ?? (oneCase(name) ? FOLDED.get(name.toLowerCase()) : undefined);
+  if (known !== undefined) {
+    return known ?? undefined;
   }
   const code = CURRENCY_NAMES[name.toLowerCase()] ?? name.toUpperCase();
   const rate = rates[code];
   return rate ? { kind: "currency", symbol: code, factor: 1 / rate } : undefined;
 };
 
-const QUERY =
-  /^\s*([$€£¥]?)\s*(-?\d+(?:[.,]\d+)*|-?\.\d+)\s*([^\d\s].*?)?\s+(?:to|in|as|=|→|->)\s+(.+?)\s*$/i;
+const AMOUNT = /^\s*([$€£¥]?)\s*(-?\d[\d.,]*|-?\.\d+)\s*(.*?)\s*$/;
+const SEPARATOR = /\s+(?:to|in|as|=|→|->)(?=\s)/gi;
+const GROUPED = /^-?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/;
 
-const numberOf = (text: string) => Number(text.replace(/,(?=\d{3}\b)/g, "").replace(",", "."));
+const numberOf = (text: string) =>
+  Number(GROUPED.test(text) ? text.replaceAll(",", "") : text.replace(",", "."));
+
+const plain = (value: number) =>
+  Number.isInteger(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER
+    ? String(value)
+    : value.toLocaleString("en-US", { maximumSignificantDigits: 12, useGrouping: false });
+
+const money = (value: number, grouping: boolean) =>
+  value !== 0 && Math.abs(value) < 1
+    ? value.toLocaleString("en-US", { maximumSignificantDigits: 4, useGrouping: grouping })
+    : value.toLocaleString("en-US", {
+        maximumFractionDigits: 2,
+        minimumFractionDigits: 2,
+        useGrouping: grouping,
+      });
 
 const shown = (value: number, kind: string) =>
-  kind === "currency"
-    ? value.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 })
-    : String(Number(value.toPrecision(Math.abs(value) >= 1 ? 10 : 6)));
+  kind === "currency" ? money(value, true) : plain(value);
+
+const unitsOf = (sign: string, rest: string, rates: Rates): [Unit, Unit] | undefined => {
+  for (const separator of rest.matchAll(SEPARATOR)) {
+    const named = rest.slice(0, separator.index).trim();
+    const from = named ? unitOf(named, rates) : sign ? unitOf(sign, rates) : undefined;
+    const to = unitOf(rest.slice(separator.index + separator[0].length).trim(), rates);
+    if (
+      from &&
+      to &&
+      from.kind === to.kind &&
+      (!sign || !named || unitOf(sign, rates)?.symbol === from.symbol)
+    ) {
+      return [from, to];
+    }
+  }
+  return undefined;
+};
 
 export function convert(text: string, rates: Rates = {}): Conversion | undefined {
-  const found = QUERY.exec(text);
+  const found = AMOUNT.exec(text);
   if (!found) {
     return undefined;
   }
-  const [, sign, digits, named, target] = found;
-  const source = (named ?? sign)!.trim();
-  const from = source ? unitOf(source, rates) : undefined;
-  const to = unitOf(target!, rates);
-  if (!from || !to || from.kind !== to.kind || from.symbol === to.symbol) {
+  const [, sign, digits, rest] = found;
+  const units = unitsOf(sign!, ` ${rest!} `, rates);
+  if (!units || units[0].symbol === units[1].symbol) {
     return undefined;
   }
+  const [from, to] = units;
   const amount = numberOf(digits!);
   const base = amount * from.factor + (from.offset ?? 0);
   const value = (base - (to.offset ?? 0)) / to.factor;
@@ -177,6 +215,6 @@ export function convert(text: string, rates: Rates = {}): Conversion | undefined
   return {
     from: `${shown(amount, from.kind)} ${from.symbol}`,
     to: `${shown(value, to.kind)} ${to.symbol}`,
-    value: to.kind === "currency" ? value.toFixed(2) : shown(value, to.kind),
+    value: to.kind === "currency" ? money(value, false) : plain(value),
   };
 }

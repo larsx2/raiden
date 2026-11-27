@@ -168,7 +168,8 @@ pub fn set_fixer_key(app: AppHandle, remove: bool) -> Result<Option<String>, Str
 }
 
 fn key_end(key: &str) -> String {
-    format!("…{}", &key[key.len().saturating_sub(4)..])
+    let end: String = key.chars().rev().take(4).collect();
+    format!("…{}", end.chars().rev().collect::<String>())
 }
 
 pub fn ai(app: &AppHandle) -> Provider {
@@ -847,6 +848,13 @@ mod tests {
     use tauri_plugin_global_shortcut::{Code, Modifiers};
 
     use super::*;
+
+    #[test]
+    fn only_the_last_four_characters_of_a_key_show() {
+        assert_eq!(key_end("0123456789abcdef0123456789abc314"), "…c314");
+        assert_eq!(key_end("éaaa"), "…éaaa");
+        assert_eq!(key_end("ab"), "…ab");
+    }
 
     fn scratch(name: &str) -> Files {
         let folder = std::env::temp_dir().join(format!("raiden-{name}-{}", std::process::id()));

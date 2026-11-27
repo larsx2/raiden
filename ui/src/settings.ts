@@ -645,7 +645,7 @@ export function createSettings(options: {
       }
     }
     if (row.id === "currency" && now?.fixerKey) {
-      return { text: "Live rates from Fixer, saved in raiden.toml", warn: false };
+      return { text: "Fixer key saved. The ECB's rates stand in when Fixer fails", warn: false };
     }
     return { text: row.hint, warn: false };
   };

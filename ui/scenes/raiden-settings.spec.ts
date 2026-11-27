@@ -411,7 +411,7 @@ test.describe("currency rates", () => {
     await page.keyboard.press("Enter");
     await expect(row(page, "currency").locator(".value")).toHaveText("Fixer …c314");
     await expect(row(page, "currency").locator(".hint")).toHaveText(
-      "Live rates from Fixer, saved in raiden.toml",
+      "Fixer key saved. The ECB's rates stand in when Fixer fails",
     );
     await expect(page.locator("#primary")).toContainText("Remove Fixer key");
     await page.keyboard.press("Enter");
@@ -427,7 +427,7 @@ test.describe("currency rates", () => {
     await page.keyboard.type("fixer");
     await page.keyboard.press("Enter");
     await expect(row(page, "currency").locator(".hint.warn")).toHaveText(
-      "Copy a Fixer API key first: 32 letters and digits from fixer.io's dashboard",
+      "Copy a Fixer API key first: the 32 hex characters on fixer.io's dashboard",
     );
     await expect(row(page, "currency").locator(".value")).toHaveText("ECB");
   });

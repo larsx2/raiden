@@ -487,7 +487,7 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
       } else if (params.get("copied") === "key") {
         settingsFile.fixerKey = "…c314";
       } else {
-        throw "Copy a Fixer API key first: 32 letters and digits from fixer.io's dashboard";
+        throw "Copy a Fixer API key first: the 32 hex characters on fixer.io's dashboard";
       }
       return settingsFile.fixerKey as T;
     case "set_vim_keys":

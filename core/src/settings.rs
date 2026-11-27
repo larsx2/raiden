@@ -363,7 +363,15 @@ pub fn load(text: Option<&str>, development: bool, previous: Option<&Settings>) 
         None => defaults.fixer_key,
         Some(item) => match item.as_str().map(str::trim) {
             Some("") => None,
-            Some(key) => Some(key.to_owned()),
+            Some(key) => match crate::rates::fixer_key(key) {
+                Ok(key) => Some(key),
+                Err(_) => {
+                    problems.push(format!(
+                        "{FIXER_KEY} must be 32 hex characters. Raiden keeps the key it had."
+                    ));
+                    kept.fixer_key.clone()
+                }
+            },
             None => {
                 problems.push(format!(
                     "{FIXER_KEY} must be text. Raiden keeps the key it had."
@@ -1032,9 +1040,15 @@ mod tests {
             fixer_key: Some("kept".to_owned()),
             ..Settings::defaults(false)
         };
-        let loaded = load(Some("fixer_key = 5"), false, Some(&previous));
-        assert_eq!(loaded.settings.fixer_key.as_deref(), Some("kept"));
-        assert_eq!(loaded.problems.len(), 1);
+        for text in [
+            "fixer_key = 5",
+            "fixer_key = \"éaaa\"",
+            "fixer_key = \"x\\\" output=y\"",
+        ] {
+            let loaded = load(Some(text), false, Some(&previous));
+            assert_eq!(loaded.settings.fixer_key.as_deref(), Some("kept"), "{text}");
+            assert_eq!(loaded.problems.len(), 1, "{text}");
+        }
     }
 
     #[test]
