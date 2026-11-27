@@ -1107,8 +1107,8 @@ test("300 lines of code streaming in keep each update within a frame", async ({ 
       costs.length = 0;
       const emit = (text: string) =>
         window.emitAnswer({ id: streaming, kind: "delta", text, model: "haiku", hidden: {} });
-      for (let at = 0; at < told.length; at += 8) {
-        told.slice(at, at + 8).forEach(emit);
+      for (let at = 0; at < told.length; at += 32) {
+        told.slice(at, at + 32).forEach(emit);
         await new Promise((next) => setTimeout(next, 16));
       }
       await new Promise((next) => setTimeout(next, 50));

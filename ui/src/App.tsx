@@ -74,7 +74,7 @@ import { applyTyped, catchUp, type Typed } from "./typeahead";
 import tauri from "../../tauri.conf.json";
 import { SIZE_KEYS, createWindowSize, rowsGained } from "./window";
 
-export const SEARCH_PLACEHOLDER = "Search apps and commands";
+const SEARCH_PLACEHOLDER = "Search apps and commands";
 export const FOLLOW_UP_PLACEHOLDER = "Ask a follow-up";
 const ROW_HEIGHT = 40;
 const HEADING_HEIGHT = 29.5;
