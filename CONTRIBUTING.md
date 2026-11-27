@@ -39,8 +39,8 @@ mise run setup
 
 ## Write code
 
-- **No comments.** Clear names, small functions and the commit message carry the why. Write one only
-  when the code would be dangerous to change without it.
+- **No comments.** Clear names, small functions and the pull request's description carry the why.
+  Write one only when the code would be dangerous to change without it.
 - **Tests come with the change.** A fix comes with a test that fails without it.
 - **Nothing secret.** Never put API keys, tokens or personal data in code, tests or fixtures.
 

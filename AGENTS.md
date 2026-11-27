@@ -8,8 +8,8 @@ file adds how agents work here, whoever runs them.
 - Never edit in the main checkout. Start a worktree with a short lowercase name using hyphens:
   `git fetch origin main && git worktree add .worktrees/<name> -b <name> origin/main && cd .worktrees/<name> && mise trust && mise run setup`
 - Run every tool through mise: `mise x -- <command>`, or a task with `mise run <task>`.
-- On a fork, add larsx2/raiden as `upstream` and use `upstream/main` wherever this file says
-  `origin/main`.
+- On a fork, add larsx2/raiden as `upstream` and use `upstream` wherever this file says `origin`,
+  except when pushing your branch.
 
 ## Before a pull request
 
