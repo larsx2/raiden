@@ -222,7 +222,7 @@ jobs:
           echo "release=$MINE" >> "$GITHUB_OUTPUT"
 
       - name: Remember the release this run made
-        if: steps.verify.outputs.release != ''
+        if: always() && steps.verify.outputs.release != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-id
@@ -236,8 +236,10 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Find the release an earlier attempt made
+        id: earlier
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
         with:
@@ -249,9 +251,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DRAFT: ${{ needs.sign.outputs.draft }}
           VERIFIED: ${{ needs.sign.outputs.release }}
+          EARLIER: ${{ steps.earlier.outcome }}
         run: |
           releases="repos/$GITHUB_REPOSITORY/releases"
           tag="$GITHUB_REF_NAME"
+          if [ "$EARLIER" != success ]; then
+            count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=release-id" --jq .total_count)"
+            if [ "$count" != 0 ]; then
+              echo "::error::Could not read which release an earlier attempt made, so nothing is deleted."
+              exit 1
+            fi
+          fi
           own="$VERIFIED"
           if [ -z "$own" ] && [ -f "$RUNNER_TEMP/earlier/release-id" ]; then
             own="$(cat "$RUNNER_TEMP/earlier/release-id")"
