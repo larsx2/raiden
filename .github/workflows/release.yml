@@ -215,7 +215,8 @@ jobs:
           answer="$(gh api "$releases/tags/$GITHUB_REF_NAME" --jq '"\(.id) \(.author.login) \(.immutable)"')"
           held="$(gh api "$releases/$MINE/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")')"
           if [ "$answer" != "$MINE github-actions[bot] true" ] || [ "$held" != "$(cat "$RUNNER_TEMP/expected-list")" ]; then
-            echo "::error::$GITHUB_REF_NAME's release is not exactly the locked one this run made ($answer)."
+            gh api -X DELETE "$releases/$MINE" > /dev/null 2>&1 || true
+            echo "::error::$GITHUB_REF_NAME's release is not exactly the locked one this run made ($answer), so it is deleted."
             exit 1
           fi
           echo "release=$MINE" >> "$GITHUB_OUTPUT"
@@ -233,6 +234,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DRAFT: ${{ needs.sign.outputs.draft }}
           OWN: ${{ needs.sign.outputs.release }}
+          SIGNED: ${{ needs.sign.result }}
         run: |
           releases="repos/$GITHUB_REPOSITORY/releases"
           tag="$GITHUB_REF_NAME"
@@ -254,8 +256,12 @@ jobs:
           if [ "$id" = "$OWN" ] && [ "$locked" = true ]; then
             exit 0
           fi
-          if [ -z "$OWN" ] && [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
-            echo "::error::$tag already has a release ($answer). A re-run deletes nothing, so check who published it."
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::$tag has a release this run did not check ($answer). A re-run deletes nothing, so check who published it."
+            exit 1
+          fi
+          if [ -z "$OWN" ] && [ "$SIGNED" = success ]; then
+            echo "::error::The signing job passed but its release id was lost, so $tag's release ($answer) is kept. Check it by hand."
             exit 1
           fi
           gh api -X DELETE "$releases/$id" > /dev/null

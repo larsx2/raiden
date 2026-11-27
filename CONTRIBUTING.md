@@ -102,7 +102,9 @@ be used again, a release caught this way needs a new version number. Turn on "En
 immutability" in Settings, General, Releases before the first tag. Collaborators can still edit a
 release's notes. A last job, which runs even when an earlier one fails or is cancelled, deletes
 any release on the tag that the workflow didn't make and check. Only a force-cancelled run skips
-it, and a re-run only reports a release it didn't make, so check who published it. The notes list the `feat` and `fix` commits since the previous release.
+it, and a re-run only reports a release it didn't make, so check who published it. GitHub can't
+publish a release only if its files are unchanged, so a file a collaborator swaps into the draft
+in the moment before it is published stays up until the workflow deletes it, seconds later. The notes list the `feat` and `fix` commits since the previous release.
 
 To release:
 
@@ -125,7 +127,7 @@ workflow on any other branch or tag can't read the secrets:
 | Secret | Holds |
 | --- | --- |
 | `DEVELOPER_ID_CERTIFICATE` | The Developer ID Application certificate and its private key, exported from Keychain Access as a `.p12` file, in base64: `base64 -i raiden.p12 \| pbcopy` |
-| `DEVELOPER_ID_CERTIFICATE_PASSWORD` | The password chosen when exporting the `.p12` file |
+| `DEVELOPER_ID_CERTIFICATE_PASSWORD` | The password chosen when exporting the `.p12` file. Make it long and random: GitHub blanks any job output that contains a secret |
 | `NOTARY_KEY` | The contents of an App Store Connect API key (`AuthKey_….p8`), made in App Store Connect under Users and Access, Integrations, with the Developer role |
 | `NOTARY_KEY_ID` | That key's ID |
 | `NOTARY_ISSUER` | The Issuer ID shown above the key list |
