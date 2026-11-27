@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
-use std::ffi::c_void;
+use std::collections::{HashSet, VecDeque};
+use std::ffi::{CStr, CString, c_void};
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -15,12 +15,18 @@ use raiden_core::files::{self, FileRow, Found};
 use tauri::State;
 use tokio::sync::oneshot;
 
+use crate::names::Index;
+use raiden_core::names::Hit;
+
 type MDQueryRef = *const c_void;
 
 const SYNCHRONOUS: usize = 1;
 const LONGEST: Duration = Duration::from_secs(2);
 const SLICE: f64 = 0.01;
 const REMEMBERED: usize = 400;
+const SECONDS_FROM_1970_TO_2001: f64 = 978_307_200.0;
+const READS_BETWEEN_LOOKS_FOR_NEWER: usize = 128;
+const LAST_USED: &CStr = c"com.apple.lastuseddate#PS";
 
 #[link(name = "CoreServices", kind = "framework")]
 unsafe extern "C" {
@@ -48,7 +54,7 @@ unsafe extern "C" {
 struct Query(CFType);
 
 impl Query {
-    fn new(text: &str, folder: &str, most: usize, values: &[CFStringRef]) -> Option<Self> {
+    fn new(text: &str, folders: &[String], most: usize, values: &[CFStringRef]) -> Option<Self> {
         let text = CFString::new(text);
         let names: Vec<CFString> = values
             .iter()
@@ -67,7 +73,8 @@ impl Query {
             return None;
         }
         let query = Self(unsafe { CFType::wrap_under_create_rule(made) });
-        let scope = CFArray::from_CFTypes(&[CFString::new(folder)]);
+        let folders: Vec<CFString> = folders.iter().map(|folder| CFString::new(folder)).collect();
+        let scope = CFArray::from_CFTypes(&folders);
         unsafe {
             MDQuerySetSearchScope(query.raw(), scope.as_concrete_TypeRef(), 0);
             MDQuerySetMaxCount(query.raw(), isize::try_from(most).unwrap_or(isize::MAX));
@@ -131,7 +138,7 @@ const INDEX_KEPT: Duration = Duration::from_secs(60);
 fn index_on_now() -> bool {
     Query::new(
         "kMDItemContentTypeTree == \"public.folder\"",
-        &home(),
+        &[home()],
         1,
         &[],
     )
@@ -177,7 +184,95 @@ fn wait_for(query: &Query, mut newer: impl FnMut() -> Option<()>) -> bool {
     true
 }
 
-pub fn search<T>(text: &str, home: &str, mut newer: impl FnMut() -> Option<T>) -> Outcome<T> {
+fn last_used(path: &str) -> Option<f64> {
+    let path = CString::new(path).ok()?;
+    let mut stamp = [0_u8; 16];
+    let read = unsafe {
+        libc::getxattr(
+            path.as_ptr(),
+            LAST_USED.as_ptr(),
+            stamp.as_mut_ptr().cast(),
+            stamp.len(),
+            0,
+            0,
+        )
+    };
+    if read < 8 {
+        return None;
+    }
+    let seconds = i64::from_le_bytes(stamp[..8].try_into().ok()?);
+    let nanoseconds = i64::from_le_bytes(stamp[8..].try_into().ok()?);
+    Some(seconds as f64 + nanoseconds as f64 / 1e9 - SECONDS_FROM_1970_TO_2001)
+}
+
+fn inside_any(path: &str, folders: &[String]) -> bool {
+    folders.iter().any(|folder| {
+        path.strip_prefix(folder.as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+
+fn tier_that_can_show(hits: &[Hit]) -> u8 {
+    hits.get(files::SHOWN - 1).map_or(0, |hit| hit.closeness)
+}
+
+struct Gathered {
+    found: Vec<Found>,
+    files: HashSet<String>,
+    ask_spotlight: Vec<String>,
+}
+
+fn gather<T>(
+    text: &str,
+    home: &str,
+    index: &Index,
+    newer: &mut impl FnMut() -> Option<T>,
+) -> Result<Gathered, T> {
+    let Some(lookup) = index.search(text, files::GATHERED) else {
+        return Ok(Gathered {
+            found: Vec::new(),
+            files: HashSet::new(),
+            ask_spotlight: vec![home.to_owned()],
+        });
+    };
+    let hits: Vec<Hit> = lookup
+        .hits
+        .into_iter()
+        .filter(|hit| !inside_any(&hit.path, &lookup.blocked))
+        .collect();
+    let lowest = tier_that_can_show(&hits);
+    let files = hits
+        .iter()
+        .filter(|hit| hit.is_file)
+        .map(|hit| hit.path.clone())
+        .collect();
+    let mut found = Vec::with_capacity(hits.len());
+    for (at, hit) in hits.into_iter().enumerate() {
+        if at % READS_BETWEEN_LOOKS_FOR_NEWER == READS_BETWEEN_LOOKS_FOR_NEWER - 1
+            && let Some(next) = newer()
+        {
+            return Err(next);
+        }
+        found.push(Found {
+            used_at: (hit.closeness >= lowest)
+                .then(|| last_used(&hit.path))
+                .flatten(),
+            path: hit.path,
+        });
+    }
+    Ok(Gathered {
+        found,
+        files,
+        ask_spotlight: lookup.blocked,
+    })
+}
+
+pub fn search<T>(
+    text: &str,
+    home: &str,
+    index: &Index,
+    mut newer: impl FnMut() -> Option<T>,
+) -> Outcome<T> {
     let answer = |files: Vec<FileRow>, index_off: bool| Answer {
         query: text.to_owned(),
         files,
@@ -186,12 +281,27 @@ pub fn search<T>(text: &str, home: &str, mut newer: impl FnMut() -> Option<T>) -
     let Some(spotlight) = files::spotlight_query(text) else {
         return Outcome::Done(answer(Vec::new(), false));
     };
+    let Gathered {
+        mut found,
+        files,
+        ask_spotlight,
+    } = match gather(text, home, index, &mut newer) {
+        Ok(gathered) => gathered,
+        Err(next) => return Outcome::Replaced(next),
+    };
+    let from_index = ask_spotlight.first().is_none_or(|first| first != home);
+    let is_file = |path: &str| files.contains(path) || Path::new(path).is_file();
+    if ask_spotlight.is_empty() {
+        return Outcome::Done(answer(files::ranked(found, text, home, is_file), false));
+    }
     let values = unsafe { [kMDItemPath, kMDItemLastUsedDate] };
-    let Some(query) = Query::new(&spotlight, home, files::GATHERED, &values) else {
-        return Outcome::Done(answer(Vec::new(), false));
+    let Some(query) = Query::new(&spotlight, &ask_spotlight, files::GATHERED, &values) else {
+        return Outcome::Done(answer(files::ranked(found, text, home, is_file), false));
     };
     if !query.start(0) {
-        return Outcome::Done(answer(Vec::new(), !index_on()));
+        let rows = files::ranked(found, text, home, is_file);
+        let off = rows.is_empty() && !from_index && !index_on();
+        return Outcome::Done(answer(rows, off));
     }
     let mut replaced = None;
     let finished = wait_for(&query, || {
@@ -201,11 +311,11 @@ pub fn search<T>(text: &str, home: &str, mut newer: impl FnMut() -> Option<T>) -
     if let (false, Some(next)) = (finished, replaced) {
         return Outcome::Replaced(next);
     }
-    let found = query.found();
+    found.extend(query.found());
     drop(query);
-    let empty = found.is_empty();
-    let rows = files::ranked(found, text, home, |path| Path::new(path).is_file());
-    Outcome::Done(answer(rows, empty && !index_on()))
+    let rows = files::ranked(found, text, home, is_file);
+    let off = rows.is_empty() && !from_index && !index_on();
+    Outcome::Done(answer(rows, off))
 }
 
 struct Request {
@@ -254,7 +364,7 @@ fn remember(shown: &Shown, answer: &Answer) {
     }
 }
 
-fn serve(waiting: &Receiver<Request>, home: &str, shown: &Shown) {
+fn serve(waiting: &Receiver<Request>, home: &str, index: &Index, shown: &Shown) {
     let mut next = None;
     let mut served = 0;
     loop {
@@ -271,7 +381,9 @@ fn serve(waiting: &Receiver<Request>, home: &str, shown: &Shown) {
             continue;
         }
         let outcome = objc2::rc::autoreleasepool(|_| {
-            search(&request.query, home, || newer_than(waiting, request.asked))
+            search(&request.query, home, index, || {
+                newer_than(waiting, request.asked)
+            })
         });
         match outcome {
             Outcome::Done(answer) => {
@@ -297,14 +409,14 @@ pub struct Files {
 }
 
 impl Files {
-    pub fn start() -> Self {
+    pub fn start(index: Arc<Index>) -> Self {
         let (sender, waiting) = channel();
-        let home = home();
+        let home = crate::names::real_home(&home());
         let shown = Shown::default();
         let kept = Arc::clone(&shown);
         let started = std::thread::Builder::new()
             .name("file search".to_owned())
-            .spawn(move || serve(&waiting, &home, &kept));
+            .spawn(move || serve(&waiting, &home, &index, &kept));
         if let Err(error) = started {
             eprintln!("Raiden could not start file search: {error}");
         }
@@ -349,16 +461,11 @@ mod tests {
 
     struct Scratch(std::path::PathBuf);
 
-    impl Scratch {
-        fn new(folder: std::path::PathBuf) -> Self {
-            std::fs::create_dir_all(&folder).unwrap();
-            Self(folder)
-        }
-    }
-
     impl Drop for Scratch {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            if let Some(folder) = self.0.parent() {
+                let _ = std::fs::remove_dir_all(folder);
+            }
         }
     }
 
@@ -371,14 +478,19 @@ mod tests {
 
     #[test]
     fn short_queries_search_nothing() {
-        let answer = rows(search("ab", &home(), || None));
+        let answer = rows(search("ab", &home(), &Index::default(), || None));
         assert!(answer.files.is_empty());
         assert!(!answer.index_off);
     }
 
     #[test]
     fn a_newer_query_cancels_the_running_one() {
-        let outcome = search("raiden-never-named-like-this", &home(), || Some("newer"));
+        let outcome = search(
+            "raiden-never-named-like-this",
+            &home(),
+            &Index::default(),
+            || Some("newer"),
+        );
         assert!(matches!(outcome, Outcome::Replaced("newer")) || !index_on());
     }
 
@@ -432,7 +544,7 @@ mod tests {
         sender.send(latest).unwrap();
         sender.send(late).unwrap();
         drop(sender);
-        serve(&waiting, &home(), &Shown::default());
+        serve(&waiting, &home(), &Index::default(), &Shown::default());
         assert_eq!(late_answer.blocking_recv(), Ok(None));
         assert_eq!(
             latest_answer
@@ -468,27 +580,86 @@ mod tests {
         assert!(paths.contains(&format!("/f/{REMEMBERED}")));
     }
 
+    struct Closed(std::path::PathBuf);
+
+    impl Closed {
+        fn new(folder: &Path) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o000)).unwrap();
+            Self(folder.to_owned())
+        }
+    }
+
+    impl Drop for Closed {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    fn gathered(text: &str, home: &str, index: &Index) -> Gathered {
+        match gather(text, home, index, &mut || None::<()>) {
+            Ok(gathered) => gathered,
+            Err(()) => panic!("nothing newer was asked"),
+        }
+    }
+
+    fn scratch_home(label: &str) -> (Scratch, String) {
+        let folder =
+            std::env::temp_dir().join(format!("raiden-file-search-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("home")).unwrap();
+        let scratch = Scratch(folder.join("home").canonicalize().unwrap());
+        let home = scratch.0.to_str().unwrap().to_owned();
+        (scratch, home)
+    }
+
+    fn ready_index(home: &str, state: &Path) -> Arc<Index> {
+        let index = crate::names::start(home, state);
+        let started = Instant::now();
+        while index.search("anything", 1).is_none() {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "the index never got ready"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        index
+    }
+
+    fn mark_used(path: &Path, seconds: i64) {
+        let path = CString::new(path.to_str().unwrap()).unwrap();
+        let mut stamp = [0_u8; 16];
+        stamp[..8].copy_from_slice(&seconds.to_le_bytes());
+        let set = unsafe {
+            libc::setxattr(
+                path.as_ptr(),
+                LAST_USED.as_ptr(),
+                stamp.as_ptr().cast(),
+                stamp.len(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(set, 0);
+    }
+
     #[test]
     fn a_new_file_is_found_within_two_seconds() {
-        if !index_on() || std::env::var_os("CI").is_some() {
-            eprintln!("Spotlight's index is off or not timely here, so this check cannot run.");
-            return;
-        }
-        let home = home();
-        let unique = format!(
-            "raiden-file-search-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |since| since.as_nanos())
-        );
-        let folder = Scratch::new(Path::new(&home).join(&unique));
-        let file = folder.0.join(format!("{unique}.txt"));
+        let (scratch, home) = scratch_home("new");
+        let index = ready_index(&home, &scratch.0.with_file_name("state"));
+        let file = scratch.0.join("Documents/raiden-brand-new.txt");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, "found").unwrap();
         let started = Instant::now();
         let mut found = false;
-        while !found && started.elapsed() < LONGEST {
-            found = rows(search(&unique, &home, || None))
+        let allowed = if std::env::var_os("CI").is_some() {
+            Duration::from_secs(10)
+        } else {
+            LONGEST
+        };
+        while !found && started.elapsed() < allowed {
+            found = rows(search("raiden-brand-new", &home, &index, || None))
                 .files
                 .iter()
                 .any(|row| Path::new(&row.path) == file);
@@ -497,8 +668,123 @@ mod tests {
             }
         }
         let took = started.elapsed();
-        drop(folder);
         assert!(found, "{} was not found within 2 s", file.display());
         eprintln!("found {} in {took:?}", file.display());
+    }
+
+    #[test]
+    fn the_index_answers_with_recently_opened_files_first() {
+        let (scratch, home) = scratch_home("used");
+        for name in ["a/report.txt", "b/report.txt", "c/report.txt"] {
+            let path = scratch.0.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "").unwrap();
+        }
+        mark_used(&scratch.0.join("b/report.txt"), 1_800_000_000);
+        mark_used(&scratch.0.join("c/report.txt"), 1_700_000_000);
+        let index = ready_index(&home, &scratch.0.with_file_name("state"));
+        let answer = rows(search("report", &home, &index, || None));
+        let folders: Vec<&str> = answer.files.iter().map(|row| row.folder.as_str()).collect();
+        assert!(!answer.index_off);
+        assert_eq!(answer.files[0].icon, ".txt");
+        assert_eq!(folders.len(), 3);
+        assert!(
+            folders[0].ends_with("/b") && folders[1].ends_with("/c"),
+            "{folders:?}"
+        );
+    }
+
+    #[test]
+    fn a_recently_opened_deep_file_beats_hundreds_of_shallow_namesakes() {
+        let (scratch, home) = scratch_home("namesakes");
+        for at in 0..700 {
+            let path = scratch.0.join(format!("repo-{at}/README.md"));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "").unwrap();
+        }
+        let deep = scratch.0.join("work/clients/acme/2026/q4/notes/README.md");
+        std::fs::create_dir_all(deep.parent().unwrap()).unwrap();
+        std::fs::write(&deep, "").unwrap();
+        mark_used(&deep, 1_800_000_000);
+        let index = ready_index(&home, &scratch.0.with_file_name("state"));
+        let answer = rows(search("readme", &home, &index, || None));
+        assert_eq!(Path::new(&answer.files[0].path), deep);
+    }
+
+    #[test]
+    fn folders_macos_keeps_closed_are_asked_of_spotlight_instead_of_the_index() {
+        let (scratch, home) = scratch_home("closed");
+        let documents = scratch.0.join("Documents");
+        std::fs::create_dir_all(&documents).unwrap();
+        std::fs::write(documents.join("contract.pdf"), "").unwrap();
+        std::fs::write(scratch.0.join("contract notes.txt"), "").unwrap();
+        let closed = Closed::new(&documents);
+        let index = ready_index(&home, &scratch.0.with_file_name("state"));
+        let gathered = gathered("contract", &home, &index);
+        drop(closed);
+        assert_eq!(gathered.ask_spotlight, [documents.to_str().unwrap()]);
+        let paths: Vec<&str> = gathered
+            .found
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect();
+        assert_eq!(
+            paths,
+            [scratch.0.join("contract notes.txt").to_str().unwrap()]
+        );
+    }
+
+    #[test]
+    fn last_used_dates_are_on_spotlights_clock() {
+        let (scratch, _) = scratch_home("clock");
+        let file = scratch.0.join("x.txt");
+        std::fs::write(&file, "").unwrap();
+        mark_used(&file, 978_307_200 + 1000);
+        assert_eq!(last_used(file.to_str().unwrap()), Some(1000.0));
+        assert_eq!(last_used(scratch.0.join("missing").to_str().unwrap()), None);
+    }
+
+    #[test]
+    fn only_folders_macos_protects_are_handed_to_spotlight() {
+        let (scratch, home) = scratch_home("unprotected");
+        let private = scratch.0.join("Code/db/pgdata");
+        std::fs::create_dir_all(&private).unwrap();
+        std::fs::write(scratch.0.join("Code/db/schema.sql"), "").unwrap();
+        let closed = Closed::new(&private);
+        let index = ready_index(&home, &scratch.0.with_file_name("state"));
+        let gathered = gathered("schema", &home, &index);
+        drop(closed);
+        assert!(gathered.ask_spotlight.is_empty());
+        assert_eq!(gathered.found.len(), 1);
+    }
+
+    #[test]
+    fn typing_on_stops_reading_last_used_dates_for_the_old_query() {
+        let (scratch, home) = scratch_home("superseded");
+        for at in 0..400 {
+            std::fs::write(scratch.0.join(format!("draft {at}.txt")), "").unwrap();
+        }
+        let index = ready_index(&home, &scratch.0.with_file_name("state"));
+        let mut asked = 0;
+        let outcome = gather("draft", &home, &index, &mut || {
+            asked += 1;
+            Some("draft 3")
+        });
+        assert!(matches!(outcome, Err("draft 3")));
+        assert_eq!(asked, 1);
+    }
+
+    #[test]
+    fn a_home_reached_through_a_link_still_finds_its_files() {
+        let (scratch, _) = scratch_home("linked");
+        std::fs::write(scratch.0.join("through-link.txt"), "").unwrap();
+        let link = scratch.0.with_file_name("home-link");
+        std::os::unix::fs::symlink(&scratch.0, &link).unwrap();
+        let link = link.to_str().unwrap().to_owned();
+        let index = ready_index(&link, &scratch.0.with_file_name("state"));
+        let home = crate::names::real_home(&link);
+        let answer = rows(search("through-link", &home, &index, || None));
+        assert_eq!(answer.files.len(), 1);
+        assert_eq!(answer.files[0].folder, "~");
     }
 }

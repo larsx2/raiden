@@ -79,9 +79,15 @@ fn is_app_folder(path: &str) -> bool {
 }
 
 fn is_found_file(path: &str) -> bool {
-    let home = std::env::var("HOME").unwrap_or_default();
+    is_found_under(
+        path,
+        &crate::names::real_home(&std::env::var("HOME").unwrap_or_default()),
+    )
+}
+
+fn is_found_under(path: &str, home: &str) -> bool {
     Path::new(path).is_absolute()
-        && raiden_core::files::kept(path, &home)
+        && raiden_core::files::kept(path, home)
         && std::fs::symlink_metadata(path).is_ok()
 }
 
@@ -156,7 +162,7 @@ pub fn open_in_editor(file: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_app_folder, is_found_file, web_link};
+    use super::{is_app_folder, is_found_file, is_found_under, web_link};
 
     #[test]
     fn opens_only_web_links() {
@@ -178,6 +184,26 @@ mod tests {
         ] {
             assert!(web_link(refused).is_err(), "{refused} should be refused");
         }
+    }
+
+    #[test]
+    fn a_file_found_under_a_home_reached_through_a_link_can_be_opened() {
+        let base = std::env::temp_dir().join(format!("raiden-linked-home-{}", std::process::id()));
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("Documents")).unwrap();
+        let real = real.canonicalize().unwrap();
+        let file = real.join("Documents/plan.txt");
+        std::fs::write(&file, "").unwrap();
+        let link = base.join("link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let link = link.to_str().unwrap();
+        let file = file.to_str().unwrap();
+        let through_link = is_found_under(file, &crate::names::real_home(link));
+        let raw = is_found_under(file, link);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(through_link);
+        assert!(!raw);
     }
 
     #[test]
