@@ -100,7 +100,8 @@ made itself, holding exactly the files it built, and only if GitHub locks the re
 published. Otherwise it deletes the release and fails, and since a locked release's version can't
 be used again, a release caught this way needs a new version number. Turn on "Enable release
 immutability" in Settings, General, Releases before the first tag. Collaborators can still edit a
-release's notes. The notes list the `feat` and `fix` commits since the previous release.
+release's notes, and a run that is force-cancelled skips the final check. If a run stops because
+the tag already has a release, find out who published it before releasing again. The notes list the `feat` and `fix` commits since the previous release.
 
 To release:
 

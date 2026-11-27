@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check:
+  release-check:
     if: (github.event_name == 'push' && github.ref_type == 'tag') || github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 60
@@ -55,7 +55,7 @@ jobs:
       - run: mise run test
 
   build:
-    needs: check
+    needs: release-check
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -103,6 +103,7 @@ jobs:
             echo "::error::GitHub could not say whether $GITHUB_REF_NAME has a release: $answer"
             exit 1
           fi
+          touch "$RUNNER_TEMP/release-started"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -165,6 +166,7 @@ jobs:
           retention-days: 7
 
       - name: Publish the release
+        id: publish
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -180,9 +182,10 @@ jobs:
           case "$tag" in
             *-*) prerelease=true ;;
           esac
-          id="$(gh api -X POST "$releases" -f tag_name="$tag" -f name="Raiden ${tag#v}" \
-            -F draft=true -F prerelease="$prerelease" -F body=@"$RUNNER_TEMP/notes.md" --jq .id)"
-          trap 'gh api -X DELETE "$releases/$id" > /dev/null || true' EXIT
+          gh api -X POST "$releases" -f tag_name="$tag" -f name="Raiden ${tag#v}" \
+            -F draft=true -F prerelease="$prerelease" -F body=@"$RUNNER_TEMP/notes.md" \
+            --jq .id > "$RUNNER_TEMP/release-id"
+          id="$(cat "$RUNNER_TEMP/release-id")"
           : > "$RUNNER_TEMP/expected"
           for file in target/dist/*.dmg target/dist/*.sha256; do
             name="$(basename "$file")"
@@ -190,21 +193,51 @@ jobs:
               -H "Content-Type: application/octet-stream" --input "$file" > /dev/null
             echo "$name sha256:$(shasum -a 256 "$file" | cut -d ' ' -f 1) " >> "$RUNNER_TEMP/expected"
           done
-          expected="$(LC_ALL=C sort "$RUNNER_TEMP/expected" | paste -sd ',' -)"
-          held() {
-            gh api "$releases/$id/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")'
-          }
-          if [ "$(held)" != "$expected" ]; then
+          LC_ALL=C sort "$RUNNER_TEMP/expected" | paste -sd ',' - > "$RUNNER_TEMP/expected-list"
+          held="$(gh api "$releases/$id/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")')"
+          if [ "$held" != "$(cat "$RUNNER_TEMP/expected-list")" ]; then
             echo "::error::The draft does not hold exactly the files this run made, so it stays unpublished."
             exit 1
           fi
           gh api -X PATCH "$releases/$id" -f tag_name="$tag" -F prerelease="$prerelease" -F draft=false > /dev/null
-          published="$(gh api "$releases/tags/$tag" --jq '"\(.id) \(.author.login) \(.immutable)"')"
-          if [ "$published" != "$id github-actions[bot] true" ] || [ "$(held)" != "$expected" ]; then
-            echo "::error::The published $tag release is not exactly the one this run made and locked ($published), so it is deleted."
-            exit 1
+
+      - name: Keep only the release this run made
+        if: always() && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISHED: ${{ steps.publish.outcome }}
+        run: |
+          [ -f "$RUNNER_TEMP/release-started" ] || exit 0
+          tag="$GITHUB_REF_NAME"
+          releases="repos/$GITHUB_REPOSITORY/releases"
+          mine="$(cat "$RUNNER_TEMP/release-id" 2>/dev/null || true)"
+          expected="$(cat "$RUNNER_TEMP/expected-list" 2>/dev/null || true)"
+          if ! answer="$(gh api "$releases/tags/$tag" --jq '"\(.id) \(.author.login) \(.immutable)"' 2>&1)"; then
+            if ! printf '%s' "$answer" | grep -q "HTTP 404"; then
+              echo "::error::GitHub could not say what $tag's release holds: $answer"
+              exit 1
+            fi
+            if [ -n "$mine" ]; then
+              gh api -X DELETE "$releases/$mine" > /dev/null 2>&1 || true
+            fi
+            if [ "$PUBLISHED" = success ]; then
+              echo "::error::$tag's release was published, then removed by someone else."
+              exit 1
+            fi
+            exit 0
           fi
-          trap - EXIT
+          read -r id author locked <<< "$answer"
+          held="$(gh api "$releases/$id/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")')"
+          if [ "$id" = "$mine" ] && [ "$author" = "github-actions[bot]" ] && [ "$locked" = true ] \
+            && [ "$PUBLISHED" = success ] && [ "$held" = "$expected" ]; then
+            exit 0
+          fi
+          gh api -X DELETE "$releases/$id" > /dev/null
+          if [ -n "$mine" ] && [ "$mine" != "$id" ]; then
+            gh api -X DELETE "$releases/$mine" > /dev/null 2>&1 || true
+          fi
+          echo "::error::$tag's release was not exactly the locked one this run made ($answer), so it is deleted."
+          exit 1
 
   provenance:
     needs: sign
