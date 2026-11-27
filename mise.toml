@@ -51,6 +51,11 @@ rm -rf "$HOME/Applications/Raiden.app" "$HOME/.local/bin/raiden"
 echo "Removed Raiden. Settings stay in ~/.config/raiden, history in ~/Library/Application Support/raiden."
 """
 
+[tasks.release]
+description = "Build a signed, notarized Raiden download"
+depends = ["setup"]
+run = "sh scripts/release.sh"
+
 [tasks.ui]
 description = "Build the screens, which the app embeds"
 depends = ["setup"]
@@ -64,6 +69,7 @@ run = [
   "pnpm --dir ui exec playwright install webkit",
   "pnpm --dir ui run test:scenes",
   "cargo test --workspace",
+  "sh scripts/release.test.sh",
 ]
 
 [tasks.lint]
