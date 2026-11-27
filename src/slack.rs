@@ -73,13 +73,21 @@ impl Inner {
                 return Some(token.clone());
             }
         }
-        let account = self.account.load(Ordering::SeqCst);
-        let token = token()?;
-        let mut guard = self.token.lock().unwrap_or_else(|e| e.into_inner());
-        // Only cache it if no sign-out happened while the Keychain was read.
-        if guard.is_none() && self.account.load(Ordering::SeqCst) == account {
-            *guard = Some(token.clone());
+        // Read the Keychain under the same lock a sign-out holds, so a sign-out
+        // in progress cannot have its just-deleted token read back and cached.
+        let _change = self
+            .account_change
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        {
+            // A sign-in may have filled the cache while we waited for the lock.
+            let guard = self.token.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(token) = guard.as_ref() {
+                return Some(token.clone());
+            }
         }
+        let token = token()?;
+        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.clone());
         Some(token)
     }
 }
@@ -226,9 +234,10 @@ fn sign_out(inner: &Inner) -> SlackView {
     if gone {
         SlackView::signed_out()
     } else {
-        // The Keychain still holds the token, so say so rather than pretend the
-        // next search will find nothing.
-        SlackView::blocked(Problem::failed("the Keychain would not drop the token"))
+        // The Keychain still holds the token: stay signed in with the trouble
+        // shown, so sign-out is still offered to try again, instead of dropping
+        // to onboarding while the token lingers.
+        SlackView::problem(Problem::failed("the Keychain would not drop the token"))
     }
 }
 
@@ -434,13 +443,18 @@ fn valid_token(token: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
-// True if any word of the text is token-shaped, so a token pasted into search,
-// even behind "Bearer " or in quotes, is kept out of the search endpoint
-// before it could reach curl's argv.
+// True if a token appears anywhere in the text, however it is wrapped — behind
+// "Bearer ", quotes, or a NAME= prefix — so a token pasted into search is kept
+// out of the search endpoint before it could reach curl's argv.
 fn looks_like_token(text: &str) -> bool {
-    text.split(char::is_whitespace).any(|word| {
-        let word = word.trim_matches(['"', '\'']);
-        word.starts_with("xox") && word.len() >= 12
+    text.match_indices("xox").any(|(at, _)| {
+        let run = text[at..]
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+            .next()
+            .unwrap_or("");
+        run.len() >= 12
+            && run.as_bytes().get(3).is_some_and(u8::is_ascii_lowercase)
+            && run.as_bytes().get(4) == Some(&b'-')
     })
 }
 
@@ -702,8 +716,11 @@ mod tests {
         // Even wrapped the way people paste it.
         assert!(looks_like_token("Bearer xoxp-123456789"));
         assert!(looks_like_token("\"xoxp-123456789\""));
+        assert!(looks_like_token("SLACK_TOKEN=xoxp-123456789"));
         assert!(!looks_like_token("standup notes"));
+        assert!(!looks_like_token("talk about proxywork"));
         assert!(!looks_like_token("xox"));
+        assert!(!looks_like_token("xoxox"));
     }
 
     #[test]
