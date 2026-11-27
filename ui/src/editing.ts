@@ -21,6 +21,7 @@ const FINDS = new Set(["f", "t", "F", "T"]);
 const WANTS_CHAR = new Set([...FINDS, "r"]);
 const OBJECTS = new Set(["i", "a"]);
 const UNDO_LIMIT = 100;
+const COUNT_LIMIT = 999;
 
 export const freshEditor = (): Editor => ({ keys: [], register: "", undo: [] });
 
@@ -262,7 +263,8 @@ function counted(keys: string[]): { count: number; rest: string[] } {
     digits += keys[at];
     at++;
   }
-  return { count: digits === "" ? 1 : Number(digits), rest: keys.slice(at) };
+  const count = digits === "" ? 1 : Math.min(Number(digits), COUNT_LIMIT);
+  return { count, rest: keys.slice(at) };
 }
 
 function parse(keys: string[]): Parsed | "pending" | "invalid" {
@@ -274,7 +276,7 @@ function parse(keys: string[]): Parsed | "pending" | "invalid" {
   if (OPERATORS.has(head)) {
     const second = counted(tail);
     const [motion, char] = second.rest;
-    const count = first.count * second.count;
+    const count = Math.min(first.count * second.count, COUNT_LIMIT);
     if (motion === undefined) {
       return "pending";
     }
@@ -360,6 +362,13 @@ function rangeOf(motion: Motion, at: number, text: string): Range {
 function withOperator(editor: Editor, line: Line, parsed: Parsed): Edited | undefined {
   const { text, at } = line;
   const operator = parsed.operator ?? "";
+  if (parsed.command === "line" && operator === "y") {
+    return {
+      editor: { ...editor, register: text },
+      line: { text, at: rest(text, at) },
+      insert: false,
+    };
+  }
   if (parsed.command === "line") {
     return operate(editor, line, operator, { from: 0, to: text.length });
   }
@@ -426,13 +435,14 @@ function replace(editor: Editor, line: Line, count: number, char: string): Edite
   };
 }
 
-function undo(editor: Editor): Edited | undefined {
-  const last = editor.undo.at(-1);
+function undo(editor: Editor, count: number): Edited | undefined {
+  const kept = editor.undo.slice(0, Math.max(0, editor.undo.length - count));
+  const last = editor.undo[kept.length];
   if (!last) {
     return undefined;
   }
   return {
-    editor: { ...editor, undo: editor.undo.slice(0, -1) },
+    editor: { ...editor, undo: kept },
     line: { text: last.text, at: rest(last.text, last.at) },
     insert: false,
   };
@@ -466,7 +476,7 @@ function run(editor: Editor, line: Line, parsed: Parsed): Edited | undefined | "
     case "r":
       return replace(editor, line, parsed.count, parsed.char ?? "");
     case "u":
-      return undo(editor);
+      return undo(editor, parsed.count);
     case "i":
       return insertAt(editor, line, at);
     case "a":
@@ -505,7 +515,7 @@ export function press(editor: Editor, line: Line, token: string): Edited | "skip
   }
   const done = run(cleared, line, parsed);
   if (done === "skip") {
-    return editor.keys.length === 0 ? "skip" : unchanged;
+    return editor.keys.every((key) => /^[0-9]$/.test(key)) ? "skip" : unchanged;
   }
   return done ?? unchanged;
 }

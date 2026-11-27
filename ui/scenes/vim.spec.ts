@@ -346,14 +346,16 @@ test.describe("typing right after the hotkey", () => {
 
 const QUIET_KEYS = [..."bcdefhlmnopqrstuvwxyz0123456789-=[];',.`\\", "Space"];
 
-const pressQuietKeys = async (page: Page) => {
-  for (const key of QUIET_KEYS) {
+const ASK_QUIET_KEYS = [..."mnoqvz-=[]'`\\", "Space"];
+
+const pressQuietKeys = async (page: Page, keys = QUIET_KEYS) => {
+  for (const key of keys) {
     await page.keyboard.press(key);
     await page.keyboard.press(`Shift+${key}`);
   }
 };
 
-const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void> }> = [
+const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void>; keys?: string[] }> = [
   {
     name: "the main search",
     open: async (page) => {
@@ -382,6 +384,16 @@ const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void> }> = [
       await page.locator(".pr.selected").waitFor();
     },
   },
+  {
+    name: "Ask AI",
+    open: async (page) => {
+      await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
+      await page.waitForLoadState("load");
+      await page.locator(`#ai[data-phase="done"]`).waitFor();
+      await page.keyboard.type("ask");
+    },
+    keys: ASK_QUIET_KEYS,
+  },
 ];
 
 test.describe("Normal takes no text", () => {
@@ -393,7 +405,7 @@ test.describe("Normal takes no text", () => {
       await toNormal(page);
       const field = await page.locator("#q").inputValue();
       const before = await commandsSent(page);
-      await pressQuietKeys(page);
+      await pressQuietKeys(page, screen.keys);
       await expect(page.locator("#q")).toHaveValue(field);
       expect(await commandsSent(page)).toEqual(before);
       await expect(badge(page)).toHaveText("NORMAL");
@@ -590,7 +602,7 @@ test.describe("editing the question in Ask AI", () => {
     await expect(page.locator("#q")).toHaveValue("keep this");
   });
 
-  test("a waiting d is dropped by Enter, and holding A types nothing", async ({ page }) => {
+  test("a waiting d is dropped by another key, and holding A types nothing", async ({ page }) => {
     await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
     await page.waitForLoadState("load");
     await page.locator(`#ai[data-phase="done"]`).waitFor();
@@ -600,6 +612,12 @@ test.describe("editing the question in Ask AI", () => {
     await page.keyboard.press("ArrowDown");
     await page.keyboard.type("w");
     await expect(page.locator("#q")).toHaveValue("one two");
+    const before = await commandsSent(page);
+    await page.keyboard.type("0d");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("w");
+    await expect(page.locator("#q")).toHaveValue("one two");
+    expect(await commandsSent(page)).toEqual(before);
     await page.keyboard.down("Shift");
     await page.keyboard.down("A");
     await page.keyboard.down("A");

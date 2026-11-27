@@ -107,12 +107,14 @@ describe("changing the question", () => {
     expect(shown(type("one two", 0, "dwp"))).toBe("tone| wo");
     expect(shown(type("ab", 0, "yy$p"))).toBe("aba|b");
     expect(shown(type("ab", 0, "p"))).toBe("|ab");
+    expect(shown(type("hello world", 6, "yy"))).toBe("hello |world");
   });
 
   it("u undoes the last change, one at a time", () => {
     expect(shown(type("abcd", 0, "xxu"))).toBe("|bcd");
     expect(shown(type("abcd", 0, "xxuu"))).toBe("|abcd");
     expect(shown(type("abcd", 0, "u"))).toBe("|abcd");
+    expect(shown(type("abcd", 0, "xxx2u"))).toBe("|bcd");
   });
 
   it("undo takes back what was typed after a change as one step", () => {
@@ -140,6 +142,15 @@ describe("starting to type", () => {
   });
 });
 
+describe("counts", () => {
+  it("stop at 999, however long the count typed", () => {
+    expect(shown(type("ab", 0, "99999999999999999999l"))).toBe("a|b");
+    expect(
+      type("ab", 0, "99999999999999999999p", { ...freshEditor(), register: "x" }).line.text,
+    ).toBe(`a${"x".repeat(999)}b`);
+  });
+});
+
 describe("keys left for the screen", () => {
   it("j, k, g, G and / still scroll the answer and search, unless a command is waiting", () => {
     for (const key of ["j", "k", "g", "G", "/"]) {
@@ -147,6 +158,8 @@ describe("keys left for the screen", () => {
     }
     const waiting = type("abc", 0, "d");
     expect(press(waiting.editor, waiting.line, "j")).not.toBe("skip");
+    const counting = type("abc", 0, "3");
+    expect(press(counting.editor, counting.line, "j")).toBe("skip");
   });
 
   it("the character after f or r is the one typed, whatever the layout", () => {

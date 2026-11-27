@@ -551,6 +551,7 @@ export function App(props: {
   };
 
   const startAsking = (question: string) => {
+    editor = freshEditor();
     batch(() => {
       setMenu(null);
       setAnswering(true);
@@ -563,6 +564,7 @@ export function App(props: {
   };
 
   const showAnswer = (conversation: Conversation) => {
+    editor = freshEditor();
     batch(() => {
       setMenu(null);
       setAnswering(true);
@@ -1379,6 +1381,7 @@ export function App(props: {
       }
       const done = pressEdit(editor, lineOf(field), token);
       if (done === "skip") {
+        editor = { ...editor, keys: [] };
         return false;
       }
       editor = done.editor;
