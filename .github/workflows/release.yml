@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  check:
     if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 60
@@ -49,6 +49,21 @@ jobs:
 
       - run: mise run lint
       - run: mise run test
+
+  build:
+    needs: check
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5
+        with:
+          cache: false
+
+      - run: mise run setup
       - run: mise x -- sh scripts/release.sh build
       - run: ditto -c -k --keepParent target/release/bundle/macos/Raiden.app "$RUNNER_TEMP/Raiden.zip"
 
@@ -65,8 +80,6 @@ jobs:
     environment: release
     permissions:
       contents: write
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -102,6 +115,9 @@ jobs:
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$password" "$keychain"
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $RUNNER_TEMP/DeveloperIDG2CA.cer" | shasum -a 256 -c
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain"
           (umask 077 && printf '%s' "$DEVELOPER_ID_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12")
           security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
             -P "$DEVELOPER_ID_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
@@ -123,14 +139,7 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/notary.p8"
 
-      - name: Record where the download was built
-        if: ${{ !github.event.repository.private }}
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: target/dist/*.dmg
-
-      - name: Keep the download of a manual run
-        if: github.ref_type != 'tag'
+      - name: Keep the download
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: raiden
@@ -143,16 +152,38 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           sh scripts/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
-          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            set -- --draft --verify-tag --title "Raiden ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md"
-            case "$GITHUB_REF_NAME" in
-              *-*) set -- "$@" --prerelease ;;
-            esac
-            gh release create "$GITHUB_REF_NAME" "$@"
-          fi
-          if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" != true ]; then
-            echo "::error::$GITHUB_REF_NAME is already published, so its download stays as it is."
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .id" |
+            while read -r id; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            done
+          set -- --draft --verify-tag --title "Raiden ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md"
+          case "$GITHUB_REF_NAME" in
+            *-*) set -- "$@" --prerelease ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" "$@" target/dist/*.dmg target/dist/*.sha256
+          files="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '[.assets[].name] | sort | join(" ")')"
+          expected="$(for file in target/dist/*.dmg target/dist/*.sha256; do basename "$file"; done | sort | paste -sd ' ' -)"
+          if [ "$files" != "$expected" ]; then
+            echo "::error::The draft holds $files, not $expected, so it stays unpublished."
             exit 1
           fi
-          gh release upload "$GITHUB_REF_NAME" --clobber target/dist/*.dmg target/dist/*.sha256
           gh release edit "$GITHUB_REF_NAME" --draft=false
+
+  provenance:
+    needs: sign
+    if: github.ref_type == 'tag' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: raiden
+          path: dist
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.dmg
