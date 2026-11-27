@@ -67,8 +67,8 @@ answers for every change:
 | `ui` | The screens in `ui/` |
 | `core` | Search, settings, answers and the rest in `core/` |
 
-The type is `feat`, `fix`, `refactor`, `test`, `docs`, `style`, `ci` or `chore`, and the message
-says what changed and why:
+The type is `feat`, `fix`, `refactor`, `test`, `docs`, `style`, `ci` or `chore`, and the title
+says what changed in under 72 characters. The why goes in the pull request's description:
 
 ```
 feat(ui): Tab and Shift Tab switch Pull Requests tabs

@@ -15,4 +15,4 @@ Which AI tool helped, if any, and with what?
 - [ ] I can explain every line of this change without asking an AI.
 - [ ] `mise run lint` and `mise run test` pass.
 - [ ] A test covers the new or fixed behavior.
-- [ ] The title is a conventional commit title, such as `fix(ui): ...`.
+- [ ] The title is a conventional commit title under 72 characters, such as `fix(ui): ...`.
