@@ -8,13 +8,17 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   check:
-    if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref_type == 'tag') || github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -91,8 +95,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > /dev/null 2>&1; then
+          if answer="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1)"; then
             echo "::error::$GITHUB_REF_NAME already has a published release, so this run signs nothing."
+            exit 1
+          fi
+          if ! printf '%s' "$answer" | grep -q "HTTP 404"; then
+            echo "::error::GitHub could not say whether $GITHUB_REF_NAME has a release: $answer"
             exit 1
           fi
 
@@ -174,27 +182,29 @@ jobs:
           esac
           id="$(gh api -X POST "$releases" -f tag_name="$tag" -f name="Raiden ${tag#v}" \
             -F draft=true -F prerelease="$prerelease" -F body=@"$RUNNER_TEMP/notes.md" --jq .id)"
+          trap 'gh api -X DELETE "$releases/$id" > /dev/null || true' EXIT
           : > "$RUNNER_TEMP/expected"
           for file in target/dist/*.dmg target/dist/*.sha256; do
             name="$(basename "$file")"
             gh api -X POST "https://uploads.github.com/$releases/$id/assets?name=$name" \
               -H "Content-Type: application/octet-stream" --input "$file" > /dev/null
-            echo "$name sha256:$(shasum -a 256 "$file" | cut -d ' ' -f 1)" >> "$RUNNER_TEMP/expected"
+            echo "$name sha256:$(shasum -a 256 "$file" | cut -d ' ' -f 1) " >> "$RUNNER_TEMP/expected"
           done
-          expected="$(sort "$RUNNER_TEMP/expected" | paste -sd ',' -)"
+          expected="$(LC_ALL=C sort "$RUNNER_TEMP/expected" | paste -sd ',' -)"
           held() {
-            gh api "$releases/$id/assets" --jq '[.[] | "\(.name) \(.digest)"] | sort | join(",")'
+            gh api "$releases/$id/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")'
           }
           if [ "$(held)" != "$expected" ]; then
             echo "::error::The draft does not hold exactly the files this run made, so it stays unpublished."
             exit 1
           fi
-          gh api -X PATCH "$releases/$id" -F draft=false > /dev/null
+          gh api -X PATCH "$releases/$id" -f tag_name="$tag" -F prerelease="$prerelease" -F draft=false > /dev/null
           published="$(gh api "$releases/tags/$tag" --jq '"\(.id) \(.author.login) \(.immutable)"')"
           if [ "$published" != "$id github-actions[bot] true" ] || [ "$(held)" != "$expected" ]; then
-            echo "::error::The published $tag release is not exactly the one this run made, locked: $published"
+            echo "::error::The published $tag release is not exactly the one this run made and locked ($published), so it is deleted."
             exit 1
           fi
+          trap - EXIT
 
   provenance:
     needs: sign
