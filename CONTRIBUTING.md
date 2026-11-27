@@ -93,10 +93,12 @@ Leave out the scope for changes to the whole repository.
 ## Releases
 
 Pushing a version tag starts the `release` workflow. One job runs lint and tests, and another
-builds Raiden.app, both without any secrets. A second job, which runs no build code, signs the app with the
-Developer ID certificate, has Apple notarize the app and its disk image, and publishes
-`Raiden-arm64.dmg` and its SHA-256 checksum as a GitHub release. The notes list the `feat` and `fix`
-commits since the previous release.
+builds Raiden.app, both without any secrets. A third job, which runs no build code, signs the app
+with the Developer ID certificate, has Apple notarize the app and its disk image, and publishes
+`Raiden-arm64.dmg` and its SHA-256 checksum as a GitHub release. It publishes only a release it
+made itself, holding exactly the files it built, and stops unless GitHub locks the release once it
+is published (Settings, General, Releases, "Enable release immutability"). Collaborators can still
+edit a release's notes. The notes list the `feat` and `fix` commits since the previous release.
 
 To release:
 
