@@ -24,6 +24,7 @@ const UNDO_LIMIT = 100;
 const COUNT_LIMIT = 999;
 const TEXT_LIMIT = 20_000;
 const KEYS: Record<string, string> = { ArrowLeft: "h", ArrowRight: "l", Home: "0", End: "$" };
+const OPTION_SYMBOLS = new Set(["$", "^", ";", ","]);
 
 export const freshEditor = (): Editor => ({ keys: [], register: "", undo: [] });
 
@@ -331,6 +332,12 @@ export function wantsChar(keys: string[]): boolean {
 export function tokenOf(keys: string[], event: Keystroke): string | undefined {
   if (wantsChar(keys)) {
     return [...event.key].length === 1 ? event.key : undefined;
+  }
+  if (event.altKey === true) {
+    return OPTION_SYMBOLS.has(event.key) ? event.key : undefined;
+  }
+  if (event.key === "Home" && /^[0-9]$/.test(keys.at(-1) ?? "")) {
+    return undefined;
   }
   const letter = KEYS[event.key] ?? vimLetter(event);
   return [...letter].length === 1 ? letter : undefined;

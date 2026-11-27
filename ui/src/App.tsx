@@ -34,7 +34,6 @@ import {
   remember,
   settle as settleEdit,
   tokenOf,
-  wantsChar,
   type Line,
 } from "./editing";
 import { ClipboardList } from "./ClipboardList";
@@ -1375,10 +1374,7 @@ export function App(props: {
         editor = { ...editor, keys: [] };
         return pending;
       }
-      const usable =
-        event.metaKey !== true &&
-        event.ctrlKey !== true &&
-        (event.altKey !== true || wantsChar(editor.keys));
+      const usable = event.metaKey !== true && event.ctrlKey !== true;
       const token = usable ? tokenOf(editor.keys, event) : undefined;
       if (token === undefined) {
         editor = { ...editor, keys: [] };
