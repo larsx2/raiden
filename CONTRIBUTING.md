@@ -100,9 +100,9 @@ made itself, holding exactly the files it built, and only if GitHub locks the re
 published. Otherwise it deletes the release and fails, and since a locked release's version can't
 be used again, a release caught this way needs a new version number. Turn on "Enable release
 immutability" in Settings, General, Releases before the first tag. Collaborators can still edit a
-release's notes, and a run that is force-cancelled skips the final check. A release that
-appears on a new tag before the workflow makes its own is deleted. If a re-run stops because the tag
-already has a release, find out who published it before releasing again. The notes list the `feat` and `fix` commits since the previous release.
+release's notes. A last job, which runs even when an earlier one fails or is cancelled, deletes
+any release on the tag that the workflow didn't make and check. Only a force-cancelled run skips
+it. The notes list the `feat` and `fix` commits since the previous release.
 
 To release:
 

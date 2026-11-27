@@ -74,6 +74,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned
+          overwrite: true
           path: ${{ runner.temp }}/Raiden.zip
           retention-days: 7
 
@@ -84,6 +85,9 @@ jobs:
     environment: release
     permissions:
       contents: write
+    outputs:
+      draft: ${{ steps.publish.outputs.draft }}
+      release: ${{ steps.verify.outputs.release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -96,19 +100,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if answer="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1)"; then
-            if [ "$GITHUB_RUN_ATTEMPT" = 1 ]; then
-              touch "$RUNNER_TEMP/release-started"
-              echo "::error::$GITHUB_REF_NAME got a release before this workflow made one, so it is deleted."
-            else
-              echo "::error::$GITHUB_REF_NAME already has a published release, so this run signs nothing."
-            fi
+            echo "::error::$GITHUB_REF_NAME already has a published release, so this run signs nothing."
             exit 1
           fi
           if ! printf '%s' "$answer" | grep -q "HTTP 404"; then
             echo "::error::GitHub could not say whether $GITHUB_REF_NAME has a release: $answer"
             exit 1
           fi
-          touch "$RUNNER_TEMP/release-started"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -167,6 +165,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: raiden
+          overwrite: true
           path: target/dist/
           retention-days: 7
 
@@ -187,10 +186,9 @@ jobs:
           case "$tag" in
             *-*) prerelease=true ;;
           esac
-          gh api -X POST "$releases" -f tag_name="$tag" -f name="Raiden ${tag#v}" \
-            -F draft=true -F prerelease="$prerelease" -F body=@"$RUNNER_TEMP/notes.md" \
-            --jq .id > "$RUNNER_TEMP/release-id"
-          id="$(cat "$RUNNER_TEMP/release-id")"
+          id="$(gh api -X POST "$releases" -f tag_name="$tag" -f name="Raiden ${tag#v}" \
+            -F draft=true -F prerelease="$prerelease" -F body=@"$RUNNER_TEMP/notes.md" --jq .id)"
+          echo "draft=$id" >> "$GITHUB_OUTPUT"
           : > "$RUNNER_TEMP/expected"
           for file in target/dist/*.dmg target/dist/*.sha256; do
             name="$(basename "$file")"
@@ -206,46 +204,82 @@ jobs:
           fi
           gh api -X PATCH "$releases/$id" -f tag_name="$tag" -F prerelease="$prerelease" -F draft=false > /dev/null
 
-      - name: Keep only the release this run made
-        if: always() && github.ref_type == 'tag'
+      - name: Check the published release is exactly this run's
+        id: verify
+        if: always() && steps.publish.outputs.draft != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          PUBLISHED: ${{ steps.publish.outcome }}
+          MINE: ${{ steps.publish.outputs.draft }}
         run: |
-          [ -f "$RUNNER_TEMP/release-started" ] || exit 0
-          tag="$GITHUB_REF_NAME"
           releases="repos/$GITHUB_REPOSITORY/releases"
-          mine="$(cat "$RUNNER_TEMP/release-id" 2>/dev/null || true)"
-          expected="$(cat "$RUNNER_TEMP/expected-list" 2>/dev/null || true)"
-          if ! answer="$(gh api "$releases/tags/$tag" --jq '"\(.id) \(.author.login) \(.immutable)"' 2>&1)"; then
+          answer="$(gh api "$releases/tags/$GITHUB_REF_NAME" --jq '"\(.id) \(.author.login) \(.immutable)"')"
+          held="$(gh api "$releases/$MINE/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")')"
+          if [ "$answer" != "$MINE github-actions[bot] true" ] || [ "$held" != "$(cat "$RUNNER_TEMP/expected-list")" ]; then
+            echo "::error::$GITHUB_REF_NAME's release is not exactly the locked one this run made ($answer)."
+            exit 1
+          fi
+          echo "$MINE" > "$RUNNER_TEMP/release-id"
+          echo "release=$MINE" >> "$GITHUB_OUTPUT"
+
+      - name: Remember the release this run made
+        if: steps.verify.outputs.release != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-id
+          overwrite: true
+          path: ${{ runner.temp }}/release-id
+
+  guard:
+    needs: [release-check, build, sign]
+    if: always() && github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Find the release an earlier attempt made
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: release-id
+          path: ${{ runner.temp }}/earlier
+
+      - name: Keep only the release this workflow made
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT: ${{ needs.sign.outputs.draft }}
+          VERIFIED: ${{ needs.sign.outputs.release }}
+        run: |
+          releases="repos/$GITHUB_REPOSITORY/releases"
+          tag="$GITHUB_REF_NAME"
+          own="$VERIFIED"
+          if [ -z "$own" ] && [ -f "$RUNNER_TEMP/earlier/release-id" ]; then
+            own="$(cat "$RUNNER_TEMP/earlier/release-id")"
+          fi
+          if [ -n "$DRAFT" ] && [ "$DRAFT" != "$own" ]; then
+            gh api -X DELETE "$releases/$DRAFT" > /dev/null 2>&1 || true
+          fi
+          if ! answer="$(gh api "$releases/tags/$tag" --jq '"\(.id) \(.immutable)"' 2>&1)"; then
             if ! printf '%s' "$answer" | grep -q "HTTP 404"; then
-              echo "::error::GitHub could not say what $tag's release holds: $answer"
+              echo "::error::GitHub could not say what $tag's release is: $answer"
               exit 1
             fi
-            if [ -n "$mine" ]; then
-              gh api -X DELETE "$releases/$mine" > /dev/null 2>&1 || true
-            fi
-            if [ "$PUBLISHED" = success ]; then
+            if [ -n "$own" ]; then
               echo "::error::$tag's release was published, then removed by someone else."
               exit 1
             fi
             exit 0
           fi
-          read -r id author locked <<< "$answer"
-          held="$(gh api "$releases/$id/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")')"
-          if [ "$id" = "$mine" ] && [ "$author" = "github-actions[bot]" ] && [ "$locked" = true ] \
-            && [ "$held" = "$expected" ]; then
+          read -r id locked <<< "$answer"
+          if [ "$id" = "$own" ] && [ "$locked" = true ]; then
             exit 0
           fi
           gh api -X DELETE "$releases/$id" > /dev/null
-          if [ -n "$mine" ] && [ "$mine" != "$id" ]; then
-            gh api -X DELETE "$releases/$mine" > /dev/null 2>&1 || true
-          fi
-          echo "::error::$tag's release was not exactly the locked one this run made ($answer), so it is deleted."
+          echo "::error::$tag had a release this workflow did not make and check ($answer), so it is deleted."
           exit 1
 
   provenance:
-    needs: sign
+    needs: [sign, guard]
     if: github.ref_type == 'tag' && !github.event.repository.private
     runs-on: ubuntu-latest
     permissions:
