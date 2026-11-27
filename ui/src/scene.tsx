@@ -6,6 +6,7 @@ import {
   FIXTURE_ANSWERS,
   FIXTURE_APPS,
   FIXTURE_CLIPS,
+  FIXTURE_CONTENTS,
   FIXTURE_FILES,
   FIXTURE_HISTORY,
   FIXTURE_TERMINALS,
@@ -20,11 +21,13 @@ import {
   type InstalledApp,
   type Listen,
   type Listing,
+  type ContentsReady,
   type Opens,
   type PullsOpening,
 } from "./App";
 import { Hud } from "./Hud";
 import type { Account, AnswerEvent, Conversation, Front } from "./ask";
+import type { ContentRow, ContentState } from "./contents";
 import type { Problem, ProblemKind, Pull, PullsView, Tab } from "./pulls";
 import type { AtLogin, Effort, SettingsView } from "./settings";
 import type { TerminalId, TerminalRow } from "./terminals";
@@ -49,6 +52,22 @@ const fixtureFiles =
           folder,
           icon: name.includes(".") ? name.slice(name.lastIndexOf(".")) : path,
         };
+      })
+    : [];
+const fixtureContents: ContentRow[] =
+  fixture === "contents"
+    ? FIXTURE_CONTENTS.flatMap(([path, , lines]) => {
+        const name = path.slice(path.lastIndexOf("/") + 1);
+        const folder = path.slice(0, path.lastIndexOf("/")).replace(HOME, "~");
+        const icon = name.slice(name.lastIndexOf("."));
+        return lines.map((text, at) => ({
+          name,
+          path,
+          folder,
+          icon,
+          line: at + 1,
+          text: text.trim(),
+        }));
       })
     : [];
 const commands: InstalledApp[] =
@@ -100,6 +119,9 @@ const iconByPath = new Map([
   ...shown.map(([name, icon]): [string, string] => [`/Applications/${name}.app`, icon]),
   ...fixtureTerminals.flatMap(({ id, app }): Array<[string, string]> => (app ? [[app, id]] : [])),
   ...(fixture === "files" ? FIXTURE_FILES : []),
+  ...(fixture === "contents"
+    ? FIXTURE_CONTENTS.map(([path, icon]): [string, string] => [path, icon])
+    : []),
 ]);
 
 const now = Date.now() / 1000;
@@ -172,6 +194,22 @@ window.finishFiles = (query) => {
     waitingFiles.splice(waitingFiles.indexOf(waiting), 1);
     waiting.resolve();
   }
+};
+
+const waitingContents: Array<{ query: string; resolve: () => void }> = [];
+window.finishContents = (query) => {
+  const released = waitingContents.filter(
+    (waiting) => query === undefined || waiting.query === query,
+  );
+  for (const waiting of released) {
+    waitingContents.splice(waitingContents.indexOf(waiting), 1);
+    waiting.resolve();
+  }
+};
+
+let contentState = (params.get("contentstate") ?? "ready") as ContentState;
+window.finishBuilding = () => {
+  contentState = "ready";
 };
 
 const pullsNow = Date.now() / 1000;
@@ -347,6 +385,25 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
         files: words.some((word) => word.length >= 3) ? found : [],
         indexOff: params.get("indexoff") === "1",
       } as T;
+    }
+    case "contents": {
+      const wanted = String(args?.["query"]);
+      if (params.get("contentswait") === "1" && wanted !== params.get("contentsnowait")) {
+        await new Promise<void>((resolve) => {
+          waitingContents.push({ query: wanted, resolve });
+        });
+      }
+      const state = contentState;
+      const lowered = wanted.toLowerCase();
+      const unread =
+        state === "waiting" ||
+        state === "off" ||
+        (state === "building" && params.get("buildingempty") === "1");
+      const rows =
+        unread || lowered === ""
+          ? []
+          : fixtureContents.filter((row) => row.text.toLowerCase().includes(lowered));
+      return { query: wanted, rows, state } as T;
     }
     case "typed_ahead":
       return (window.typedAhead?.shift() ?? null) as T;
@@ -556,6 +613,13 @@ const opens: Opens = async (handler) => {
   };
 };
 
+const contentsReady: ContentsReady = async (handler) => {
+  window.contentsReady = handler;
+  return () => {
+    window.contentsReady = undefined;
+  };
+};
+
 const earlyMs = params.get("early") === null ? undefined : Number(params.get("early"));
 const root = document.querySelector<HTMLElement>("#app");
 const size = tauri.app.windows[0];
@@ -575,6 +639,7 @@ if (root && fixture === "quick") {
         listen={listen}
         hear={hear}
         opens={opens}
+        contentsReady={contentsReady}
         pulls={pullsOpening}
         earlyMs={earlyMs}
       />

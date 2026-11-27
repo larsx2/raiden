@@ -765,6 +765,20 @@ header.loading::after {
   color: var(--text-3);
 }
 
+.note {
+  padding: 6px 10px 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.sub .line {
+  margin-left: 8px;
+}
+
+.sub .line b {
+  font-weight: 600;
+}
+
 #ctx {
   display: flex;
   align-items: center;

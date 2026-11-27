@@ -28,6 +28,18 @@ import {
 } from "./ask";
 import { createAsking } from "./asking";
 import { ClipboardList } from "./ClipboardList";
+import {
+  CONTENTS_TITLE,
+  contentKey,
+  contentNote,
+  contentPlace,
+  contentQuery,
+  startsContent,
+  stillContaining,
+  type ContentAnswer,
+  type ContentRow,
+  type ContentState,
+} from "./contents";
 import { CLIPBOARD_PLACEHOLDER, CLIPBOARD_TITLE, DELETE_KEYS, createClipboard } from "./clipboard";
 import {
   searchesFiles,
@@ -100,6 +112,7 @@ export type Call = <T>(command: string, args?: Record<string, unknown>) => Promi
 export type Listen = (handler: (event: AnswerEvent) => void) => Promise<() => void>;
 export type Hear = (handler: (keys: string) => void) => Promise<() => void>;
 export type Opens = (handler: (shown: boolean) => void) => Promise<() => void>;
+export type ContentsReady = (handler: () => void) => Promise<() => void>;
 export type InstalledApp = { name: string; path: string; under?: string; accessory?: string };
 export type PullsOpening = PullsStart & { menu?: boolean };
 export type Listing = { apps: InstalledApp[]; catalog: string };
@@ -114,6 +127,7 @@ type Menu = {
 type Press = { where: "row" | "action"; index: number };
 type Extra =
   | { kind: "file"; file: FileRow }
+  | { kind: "content"; row: ContentRow }
   | { kind: "answer"; conversation: Conversation }
   | { kind: "ask"; question: string };
 
@@ -137,9 +151,23 @@ const problemOf = (error: unknown) => (typeof error === "string" ? error : Strin
 const extraKey = (extra: Extra) =>
   extra.kind === "file"
     ? `file ${extra.file.path}`
-    : extra.kind === "answer"
-      ? `answer ${extra.conversation.id}`
-      : "ask";
+    : extra.kind === "content"
+      ? `content ${contentKey(extra.row)}`
+      : extra.kind === "answer"
+        ? `answer ${extra.conversation.id}`
+        : "ask";
+
+function Marked(props: { text: string; positions: ArrayLike<number> }): JSX.Element {
+  return (
+    <Index each={pieces(props.text.normalize("NFC"), props.positions)}>
+      {(piece) => (
+        <Show when={piece().matched} fallback={piece().text}>
+          <b>{piece().text}</b>
+        </Show>
+      )}
+    </Index>
+  );
+}
 
 const nextFrame = (callback: () => void) => {
   requestAnimationFrame(() => callback());
@@ -151,6 +179,7 @@ export function App(props: {
   listen: Listen;
   hear: Hear;
   opens?: Opens;
+  contentsReady?: ContentsReady;
   pulls?: PullsOpening;
   earlyMs?: number;
 }): JSX.Element {
@@ -167,6 +196,9 @@ export function App(props: {
   const [files, setFiles] = createSignal<FileRow[]>([]);
   const [filesPending, setFilesPending] = createSignal(false);
   const [indexOff, setIndexOff] = createSignal(false);
+  const [contents, setContents] = createSignal<ContentRow[]>([]);
+  const [contentsPending, setContentsPending] = createSignal(false);
+  const [contentState, setContentState] = createSignal<ContentState>("ready");
   const [nothingFound, setNothingFound] = createSignal("");
   const [typed, setTyped] = createSignal("");
   const [draft, setDraft] = createSignal("");
@@ -286,6 +318,8 @@ export function App(props: {
   let handPicked = false;
   let askedFiles = "";
   let filesAsked = Date.now();
+  let askedContents = "";
+  let contentsAsked = Date.now();
   let rowsOutdated = false;
   let noneAfterFiles = false;
 
@@ -310,12 +344,16 @@ export function App(props: {
     const kept = handPicked && !fresh ? keyAt(selected()) : "";
     batch(() => {
       if (search && text) {
-        const ranked = search.rank(text);
-        const found = foundAnswers(text);
-        const shownFiles = files();
+        const inside = startsContent(text);
+        const ranked = inside ? NO_POSITIONS : search.rank(text);
+        const found = inside ? [] : foundAnswers(text);
+        const shownFiles = inside ? [] : files();
+        const shownContents = inside ? contents() : [];
+        const pending = inside ? contentsPending() : filesPending();
         const asked = text.trim();
         const more: Extra[] = [
           ...shownFiles.map((file): Extra => ({ kind: "file", file })),
+          ...shownContents.map((row): Extra => ({ kind: "content", row })),
           ...found.map((conversation): Extra => ({ kind: "answer", conversation })),
           { kind: "ask", question: asked },
         ];
@@ -330,16 +368,22 @@ export function App(props: {
           sectionsOf([
             ["Results", ranked.length],
             ["Files", shownFiles.length],
+            [CONTENTS_TITLE, shownContents.length],
             ["Recent answers", found.length],
             [`Use “${asked}” with`, 1],
           ]),
         );
         const before = nothingFound();
         const stillNone =
-          noneAfterFiles && before !== "" && asked.toLowerCase().includes(before.toLowerCase());
-        const none =
-          ranked.length + shownFiles.length + found.length === 0 && (!filesPending() || stillNone);
-        noneAfterFiles = none && ((searchesFiles(asked) && !filesPending()) || stillNone);
+          !inside &&
+          noneAfterFiles &&
+          before !== "" &&
+          asked.toLowerCase().includes(before.toLowerCase());
+        const empty = ranked.length + shownFiles.length + shownContents.length + found.length === 0;
+        const none = inside
+          ? empty && contentQuery(text) !== null && !pending
+          : empty && (!pending || stillNone);
+        noneAfterFiles = !inside && none && ((searchesFiles(asked) && !pending) || stillNone);
         setNothingFound(none ? asked : "");
       } else {
         const suggested = search?.suggestions(SUGGESTIONS) ?? NO_POSITIONS;
@@ -379,7 +423,7 @@ export function App(props: {
   };
 
   const lookForFiles = (text: string) => {
-    const wanted = text.trim();
+    const wanted = startsContent(text) ? "" : text.trim();
     if (!searchesFiles(wanted)) {
       if (askedFiles !== "") {
         void props.call("files", { query: "", asked: ++filesAsked }).catch(() => undefined);
@@ -424,10 +468,79 @@ export function App(props: {
       .then(settle, () => settle(null));
   };
 
+  const lookForContents = (text: string) => {
+    const wanted = contentQuery(text);
+    if (wanted === null) {
+      if (askedContents !== "") {
+        void props.call("contents", { query: "", asked: ++contentsAsked }).catch(() => undefined);
+      }
+      askedContents = "";
+      contentsAsked++;
+      batch(() => {
+        setContents([]);
+        setContentsPending(false);
+        setContentState("ready");
+      });
+      return;
+    }
+    if (wanted === askedContents) {
+      return;
+    }
+    askedContents = wanted;
+    const asked = ++contentsAsked;
+    batch(() => {
+      setContents((before) => stillContaining(before, wanted));
+      setContentsPending(true);
+    });
+    const settle = (answer: ContentAnswer | null) => {
+      if (asked !== contentsAsked) {
+        return;
+      }
+      batch(() => {
+        if (answer) {
+          setContents(answer.rows);
+          setContentState(answer.state);
+        }
+        setContentsPending(false);
+      });
+      if (answering() || covered()) {
+        rowsOutdated = true;
+      } else {
+        build(false);
+        select(selected());
+      }
+    };
+    const ask = async () => {
+      let answer: ContentAnswer | null = null;
+      try {
+        answer = await props.call<ContentAnswer | null>("contents", { query: wanted, asked });
+      } catch {
+        answer = null;
+      }
+      settle(answer);
+    };
+    void ask();
+  };
+
+  const lookForAll = (text: string) => {
+    lookForFiles(text);
+    lookForContents(text);
+  };
+
+  const shownNote = () => (contentQuery(typed()) === null ? "" : contentNote(contentState()));
+
+  const contentsBuilt = () => {
+    const text = typedText();
+    if (contentQuery(text) !== null) {
+      askedContents = "";
+      lookForContents(text);
+    }
+  };
+
   const refresh = () => {
     handPicked = false;
     forgetNote();
-    lookForFiles(typedText());
+    lookForAll(typedText());
     build(true);
   };
 
@@ -806,7 +919,8 @@ export function App(props: {
   const lookAgain = () => {
     startOverOnHide = false;
     askedFiles = "";
-    lookForFiles(typedText());
+    askedContents = "";
+    lookForAll(typedText());
   };
 
   const openInTerminal = (path: string) => {
@@ -836,27 +950,36 @@ export function App(props: {
   const extraActions = (extra: Extra): Action[] =>
     extra.kind === "file"
       ? fileActions(extra.file)
-      : extra.kind === "answer"
-        ? [
-            {
-              title: "Open answer",
-              keys: "↵",
-              hides: false,
-              run: () => showAnswer(extra.conversation),
-            },
-          ]
-        : [{ title: "Ask AI", keys: "↵", hides: false, run: () => startAsking(extra.question) }];
+      : extra.kind === "content"
+        ? fileActions(extra.row)
+        : extra.kind === "answer"
+          ? [
+              {
+                title: "Open answer",
+                keys: "↵",
+                hides: false,
+                run: () => showAnswer(extra.conversation),
+              },
+            ]
+          : [{ title: "Ask AI", keys: "↵", hides: false, run: () => startAsking(extra.question) }];
 
   const extraTitle = (extra: Extra) =>
     extra.kind === "file"
       ? extra.file.name
-      : extra.kind === "answer"
-        ? titleOf(extra.conversation)
-        : "Ask AI";
+      : extra.kind === "content"
+        ? extra.row.name
+        : extra.kind === "answer"
+          ? titleOf(extra.conversation)
+          : "Ask AI";
 
   const fileAt = (row: number) => {
     const extra = extraAt(row);
     return extra?.kind === "file" ? extra.file : undefined;
+  };
+
+  const contentAt = (row: number) => {
+    const extra = extraAt(row);
+    return extra?.kind === "content" ? extra.row : undefined;
   };
 
   const rowActions = (row: number): Action[] | undefined => {
@@ -1531,6 +1654,7 @@ export function App(props: {
   const onBlur = () => {
     pointer = undefined;
     askedFiles = "";
+    askedContents = "";
     if (clip.open()) {
       closeClipboard();
     }
@@ -1555,6 +1679,7 @@ export function App(props: {
   let stopListening: (() => void) | undefined;
   let stopHearing: (() => void) | undefined;
   let stopOpening: (() => void) | undefined;
+  let stopContentsReady: (() => void) | undefined;
   onMount(() => {
     window.addEventListener("blur", onBlur);
     document.addEventListener("keydown", onKeyDown);
@@ -1585,6 +1710,9 @@ export function App(props: {
       .then((stop) => {
         stopOpening = stop;
       });
+    void props.contentsReady?.(contentsBuilt).then((stop) => {
+      stopContentsReady = stop;
+    });
     void asking.refreshAccounts();
     void asking.refreshChoice();
     readVim();
@@ -1603,6 +1731,7 @@ export function App(props: {
     stopListening?.();
     stopHearing?.();
     stopOpening?.();
+    stopContentsReady?.();
   });
 
   let following = true;
@@ -1972,11 +2101,15 @@ export function App(props: {
             <div class="none">
               {`Nothing matches “${asked()}”`}
               <span>Press Tab to ask AI about it, or Esc to clear the search.</span>
-              <Show when={indexOff()}>
+              <Show when={indexOff() && !startsContent(asked())}>
                 <span>Files are not searched while Spotlight's index is off.</span>
               </Show>
+              <Show when={shownNote()}>{(note) => <span>{note()}</span>}</Show>
             </div>
           )}
+        </Show>
+        <Show when={!nothingFound() && shownNote()}>
+          {(note) => <div class="note">{note()}</div>}
         </Show>
         <div class="rows" style={{ height: `${virtualizer.getTotalSize()}px` }}>
           <Index each={virtualizer.getVirtualItems()}>
@@ -2082,7 +2215,11 @@ export function App(props: {
                           <Show
                             when={(() => {
                               const current = shown();
-                              return current.kind === "file" ? current.file : undefined;
+                              return current.kind === "file"
+                                ? current.file
+                                : current.kind === "content"
+                                  ? current.row
+                                  : undefined;
                             })()}
                             fallback={
                               <>
@@ -2112,21 +2249,41 @@ export function App(props: {
                                 >
                                   {(url) => <img class="icon" alt="" src={url()} />}
                                 </Show>
-                                <span class="title">
-                                  <Index
-                                    each={pieces(
-                                      file().name.normalize("NFC"),
-                                      wordPositions(file().name, typed()),
-                                    )}
-                                  >
-                                    {(piece) => (
-                                      <Show when={piece().matched} fallback={piece().text}>
-                                        <b>{piece().text}</b>
-                                      </Show>
-                                    )}
-                                  </Index>
-                                </span>
-                                <span class="sub">{file().folder}</span>
+                                <Show
+                                  when={(() => {
+                                    const current = shown();
+                                    return current.kind === "content" ? current.row : undefined;
+                                  })()}
+                                  fallback={
+                                    <>
+                                      <span class="title">
+                                        <Marked
+                                          text={file().name}
+                                          positions={wordPositions(file().name, typed())}
+                                        />
+                                      </span>
+                                      <span class="sub">{file().folder}</span>
+                                    </>
+                                  }
+                                >
+                                  {(found) => (
+                                    <>
+                                      <span class="title">{found().name}</span>
+                                      <span class="sub">
+                                        {contentPlace(found())}
+                                        <span class="line">
+                                          <Marked
+                                            text={found().text}
+                                            positions={wordPositions(
+                                              found().text,
+                                              contentQuery(typed()) ?? "",
+                                            )}
+                                          />
+                                        </span>
+                                      </span>
+                                    </>
+                                  )}
+                                </Show>
                               </>
                             )}
                           </Show>
@@ -2173,6 +2330,7 @@ export function App(props: {
               </Show>
             </Match>
             <Match when={fileAt(selected())}>Files</Match>
+            <Match when={contentAt(selected())}>{CONTENTS_TITLE}</Match>
             <Match when={extraAt(selected()) || isAiCommand(appAt(selected()))}>
               <AiIcon />
               AI
