@@ -14,7 +14,8 @@ export type GlyphName =
   | "clipboard"
   | "text"
   | "link"
-  | "image";
+  | "image"
+  | "calculator";
 
 const GLYPHS: Record<GlyphName, () => JSX.Element> = {
   gear: () => (
@@ -52,6 +53,12 @@ const GLYPHS: Record<GlyphName, () => JSX.Element> = {
     <>
       <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
       <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+    </>
+  ),
+  calculator: () => (
+    <>
+      <rect x="5" y="3" width="14" height="18" rx="2" />
+      <path d="M8 7h8M8 12h1M11.5 12h1M15 12h1M8 16h1M11.5 16h1M15 16h1" />
     </>
   ),
   image: () => (

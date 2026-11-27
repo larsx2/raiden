@@ -51,6 +51,7 @@ import {
   type Slot,
 } from "./list";
 import { plainOf } from "./markdown";
+import { calculate } from "./calculator";
 import { AiIcon, Brand, Check, GitHubMark, Glyph, Keys, MenuIcon, NoMatch } from "./parts";
 import {
   ORGS_KEYS,
@@ -115,7 +116,8 @@ type Press = { where: "row" | "action"; index: number };
 type Extra =
   | { kind: "file"; file: FileRow }
   | { kind: "answer"; conversation: Conversation }
-  | { kind: "ask"; question: string };
+  | { kind: "ask"; question: string }
+  | { kind: "math"; expression: string; value: string };
 
 const COMMAND = "raiden:";
 const GRAMMAR = "raiden:fix-grammar";
@@ -139,7 +141,7 @@ const extraKey = (extra: Extra) =>
     ? `file ${extra.file.path}`
     : extra.kind === "answer"
       ? `answer ${extra.conversation.id}`
-      : "ask";
+      : extra.kind;
 
 const nextFrame = (callback: () => void) => {
   requestAnimationFrame(() => callback());
@@ -314,20 +316,27 @@ export function App(props: {
         const found = foundAnswers(text);
         const shownFiles = files();
         const asked = text.trim();
+        const value = calculate(asked);
+        const math: Extra[] =
+          value === undefined ? [] : [{ kind: "math", expression: asked, value }];
         const more: Extra[] = [
           ...shownFiles.map((file): Extra => ({ kind: "file", file })),
           ...found.map((conversation): Extra => ({ kind: "answer", conversation })),
           { kind: "ask", question: asked },
         ];
-        const rows = new Uint32Array(ranked.length + more.length);
-        rows.set(ranked);
-        more.forEach((_, at) => {
-          rows[ranked.length + at] = count + at;
+        const rows = new Uint32Array(math.length + ranked.length + more.length);
+        rows.set(ranked, math.length);
+        math.forEach((_, at) => {
+          rows[at] = count + more.length + at;
         });
-        setExtras(more);
+        more.forEach((_, at) => {
+          rows[math.length + ranked.length + at] = count + at;
+        });
+        setExtras([...more, ...math]);
         setResults(rows);
         setSections(
           sectionsOf([
+            ["Calculator", math.length],
             ["Results", ranked.length],
             ["Files", shownFiles.length],
             ["Recent answers", found.length],
@@ -338,7 +347,8 @@ export function App(props: {
         const stillNone =
           noneAfterFiles && before !== "" && asked.toLowerCase().includes(before.toLowerCase());
         const none =
-          ranked.length + shownFiles.length + found.length === 0 && (!filesPending() || stillNone);
+          math.length + ranked.length + shownFiles.length + found.length === 0 &&
+          (!filesPending() || stillNone);
         noneAfterFiles = none && ((searchesFiles(asked) && !filesPending()) || stillNone);
         setNothingFound(none ? asked : "");
       } else {
@@ -845,14 +855,28 @@ export function App(props: {
               run: () => showAnswer(extra.conversation),
             },
           ]
-        : [{ title: "Ask AI", keys: "↵", hides: false, run: () => startAsking(extra.question) }];
+        : extra.kind === "math"
+          ? [
+              {
+                title: "Copy answer",
+                keys: "↵",
+                hides: true,
+                run: () =>
+                  void props
+                    .call("copy_text", { text: extra.value })
+                    .then(() => props.call("hide")),
+              },
+            ]
+          : [{ title: "Ask AI", keys: "↵", hides: false, run: () => startAsking(extra.question) }];
 
   const extraTitle = (extra: Extra) =>
     extra.kind === "file"
       ? extra.file.name
       : extra.kind === "answer"
         ? titleOf(extra.conversation)
-        : "Ask AI";
+        : extra.kind === "math"
+          ? extra.value
+          : "Ask AI";
 
   const fileAt = (row: number) => {
     const extra = extraAt(row);
@@ -2086,19 +2110,23 @@ export function App(props: {
                             })()}
                             fallback={
                               <>
-                                <AiIcon />
+                                <Show when={shown().kind === "math"} fallback={<AiIcon />}>
+                                  <Glyph name="calculator" />
+                                </Show>
                                 <span class="title">{extraTitle(shown())}</span>
                                 <span class="sub">
                                   {(() => {
                                     const current = shown();
                                     return current.kind === "ask"
                                       ? `“${current.question}”`
-                                      : current.kind === "answer"
-                                        ? ageLabel(current.conversation.at, Date.now() / 1000)
-                                        : "";
+                                      : current.kind === "math"
+                                        ? current.expression
+                                        : current.kind === "answer"
+                                          ? ageLabel(current.conversation.at, Date.now() / 1000)
+                                          : "";
                                   })()}
                                 </span>
-                                <Show when={shown().kind === "ask"}>
+                                <Show when={shown().kind !== "answer"}>
                                   <span class="acc">Built in</span>
                                 </Show>
                               </>

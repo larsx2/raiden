@@ -581,7 +581,8 @@ header.loading::after {
 
 .ico.gear,
 .ico.file,
-.ico.clipboard {
+.ico.clipboard,
+.ico.calculator {
   --a: #94a3b8;
   --b: #475569;
 }
