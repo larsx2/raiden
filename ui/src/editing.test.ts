@@ -75,6 +75,8 @@ describe("changing the question", () => {
     expect(shown(type(QUESTION, 9, "d0"))).toBe("|rebase onto main?");
     expect(shown(type(QUESTION, 11, "diw"))).toBe("how do I | onto main?");
     expect(shown(type(QUESTION, 11, "daw"))).toBe("how do I |onto main?");
+    expect(shown(type(QUESTION, 11, "2daw"))).toBe("how do I |main?");
+    expect(shown(type(QUESTION, 11, "d3iw"))).toBe("how do I | main?");
     expect(shown(type(QUESTION, 0, "dfe"))).toBe("|base onto main?");
     expect(shown(type(QUESTION, 0, "dte"))).toBe("|ebase onto main?");
     expect(shown(type(QUESTION, 12, "dd"))).toBe("|");

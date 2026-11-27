@@ -375,7 +375,11 @@ function withOperator(editor: Editor, line: Line, parsed: Parsed): Edited | unde
   if (parsed.command.length === 2 && OBJECTS.has(parsed.command[0] ?? "")) {
     const around = parsed.command[0] === "a";
     const big = parsed.command[1] === "W";
-    return operate(editor, line, operator, wordObject(text, at, around, big));
+    const range = wordObject(text, at, around, big);
+    for (let time = 1; time < parsed.count && range.to < text.length; time++) {
+      range.to = wordObject(text, range.to, around, big).to;
+    }
+    return operate(editor, line, operator, range);
   }
   const big = parsed.command === "W";
   const motion =

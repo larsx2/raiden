@@ -644,6 +644,29 @@ test.describe("editing the question in Ask AI", () => {
     await toNormal(page);
     await page.keyboard.type("bdiw");
     await expect(page.locator("#q")).toHaveValue("why is the sky ");
+    await page.keyboard.press("Shift+S");
+    await page.keyboard.press("Escape");
+    await expect(badge(page)).toHaveText("NORMAL");
+    await page.keyboard.press("u");
+    await expect(page.locator("#q")).toHaveValue("why is the sky ");
+  });
+
+  test("u takes back typing that began with a click", async ({ page }) => {
+    await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
+    await page.waitForLoadState("load");
+    await page.locator(`#ai[data-phase="done"]`).waitFor();
+    await page.keyboard.type("abc");
+    await toNormal(page);
+    await page.keyboard.press("x");
+    await page.locator("#q").click();
+    await expect(badge(page)).toHaveText("INSERT");
+    await page.keyboard.press("End");
+    await page.keyboard.type(" more");
+    await toNormal(page);
+    await page.keyboard.press("u");
+    await expect(page.locator("#q")).toHaveValue("ab");
+    await page.keyboard.press("u");
+    await expect(page.locator("#q")).toHaveValue("abc");
   });
 
   test("the main search keeps its Normal keys", async ({ page }) => {

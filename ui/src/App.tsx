@@ -1446,7 +1446,8 @@ export function App(props: {
   };
 
   const enterInsert = () => {
-    editor = { ...editor, keys: [] };
+    const opened = editor.opened ?? (normal() && chatting() && field ? lineOf(field) : undefined);
+    editor = { ...editor, keys: [], opened };
     batch(() => {
       setWaitingG(false);
       setMode("insert");
@@ -1483,7 +1484,9 @@ export function App(props: {
       const phase = asking.phase();
       return (
         (phase !== null && phase !== "waiting" && phase !== "signin" && phase !== "signing") ||
-        query() !== ""
+        query() !== "" ||
+        editor.opened !== undefined ||
+        editor.undo.length > 0
       );
     }
     return results().length > 0 && nothingFound() === "";
@@ -1504,8 +1507,8 @@ export function App(props: {
     on(
       [screen, vimOn],
       () => {
-        editor = freshEditor();
         enterInsert();
+        editor = freshEditor();
       },
       { defer: true },
     ),
