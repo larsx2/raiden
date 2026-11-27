@@ -12,6 +12,8 @@ const TINY = 10n ** BigInt(SHOWN);
 // Past this many bits a number takes too long to work with on each keystroke,
 // so a power is worked out roughly instead and anything else has no answer.
 const MOST_BITS = 1024;
+// A double keeps about this many digits.
+const DOUBLE_DIGITS = 15;
 
 const tokensOf = (text: string): string[] | undefined => {
   const tokens: string[] = [];
@@ -91,9 +93,6 @@ const decimal = (text: string, digits = Infinity): Value => {
   return value(BigInt(`${whole}${part}` || "0"), 10n ** BigInt(part.length), digits);
 };
 
-// A double keeps about this many digits.
-const DOUBLE_DIGITS = 15;
-
 const roughly = (number: number, digits: number): Value => {
   if (!Number.isFinite(number)) {
     return fail();
@@ -107,11 +106,6 @@ const roughly = (number: number, digits: number): Value => {
 
 const raise = (base: Value, power: Value): Value => {
   const times = absolute(power.n);
-  if (power.d === 1n && base.d === 1n && absolute(base.n) <= 1n) {
-    const odd = times % 2n === 1n;
-    const raised = value(base.n === 0n ? (times === 0n ? 1n : 0n) : odd ? base.n : 1n, 1n);
-    return power.n < 0n ? divide(ONE, raised) : raised;
-  }
   if (power.d === 1n && BigInt(bits(base.n) + bits(base.d)) * times <= BigInt(MOST_BITS)) {
     const raised = value(
       base.n ** times,
@@ -208,6 +202,22 @@ const withPoint = (digits: bigint, places: number) => {
   return part ? `${whole}.${part}` : whole;
 };
 
+// A positive fraction written out in full, when its decimals end within
+// MOST_DIGITS digits.
+const inFull = (size: bigint, d: bigint): string | undefined => {
+  let rest = d;
+  let twos = 0;
+  let fives = 0;
+  for (; rest % 2n === 0n; rest /= 2n) twos++;
+  for (; rest % 5n === 0n; rest /= 5n) fives++;
+  if (rest !== 1n) {
+    return undefined;
+  }
+  const places = Math.max(twos, fives);
+  const text = withPoint((size * 10n ** BigInt(places)) / d, places);
+  return text.replace(".", "").replace(/^0+/, "").length <= MOST_DIGITS ? text : undefined;
+};
+
 // An exact answer in full when it ends within MOST_DIGITS digits, else rounded
 // to SHOWN significant digits, or fewer when a rough answer trusts fewer, and
 // nothing when that rounding would hide the fraction or leave no digit.
@@ -225,26 +235,16 @@ const shown = ({ n, d, digits }: Value): string | undefined => {
     return undefined;
   }
   const sign = n < 0n ? "-" : "";
-  if (exact) {
-    let rest = d;
-    let twos = 0;
-    let fives = 0;
-    for (; rest % 2n === 0n; rest /= 2n) twos++;
-    for (; rest % 5n === 0n; rest /= 5n) fives++;
-    if (rest === 1n) {
-      const places = Math.max(twos, fives);
-      const text = withPoint((size * 10n ** BigInt(places)) / d, places);
-      if (text.replace(".", "").replace(/^0+/, "").length <= MOST_DIGITS) {
-        return sign + text;
-      }
-    }
+  const full = exact ? inFull(size, d) : undefined;
+  if (full !== undefined) {
+    return sign + full;
   }
   const whole = size / d;
   let places = trusted - (whole === 0n ? 0 : whole.toString().length);
   if (whole === 0n) {
     for (let scaled = size * 10n; scaled < d; scaled *= 10n) places++;
   }
-  if (places < 0 || (exact && places === 0)) {
+  if (places < 0) {
     return undefined;
   }
   const scale = 10n ** BigInt(places);
