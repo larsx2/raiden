@@ -12,6 +12,7 @@ pub mod probe;
 pub mod pulls;
 pub mod search;
 pub mod settings;
+pub mod slack;
 pub mod speed;
 pub mod system_settings;
 pub mod terminals;
