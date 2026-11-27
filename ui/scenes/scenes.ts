@@ -27,6 +27,7 @@ declare global {
     pressHotkey?: (keys: string) => void;
     editSettings: (edit: { hotkey?: string; ai?: string; effort?: string; vim?: boolean }) => void;
     openClipboard?: (shown: boolean) => void;
+    previewEvent?: (what: string) => void;
     typedAhead?: Typed[][];
   }
 }

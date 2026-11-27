@@ -15,10 +15,13 @@ export type Action = {
 
 export type AppTarget = { path: string };
 
+export const QUICK_LOOK_KEYS = "⌘ Y";
+
 export type AppHandlers = {
   open: () => void;
   showInFinder: (path: string) => void;
   copyPath: (path: string) => void;
+  quickLook?: (path: string) => void;
 };
 
 export function appActions(app: AppTarget, handlers: AppHandlers): Action[] {
@@ -30,6 +33,16 @@ export function appActions(app: AppTarget, handlers: AppHandlers): Action[] {
       hides: true,
       run: () => handlers.showInFinder(app.path),
     },
+    ...(handlers.quickLook
+      ? [
+          {
+            title: "Quick Look",
+            keys: QUICK_LOOK_KEYS,
+            hides: false,
+            run: () => handlers.quickLook?.(app.path),
+          },
+        ]
+      : []),
     { title: "Copy path", keys: "⌘ ⇧ C", hides: false, run: () => handlers.copyPath(app.path) },
   ];
 }

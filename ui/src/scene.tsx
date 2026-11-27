@@ -21,6 +21,7 @@ import {
   type Listen,
   type Listing,
   type Opens,
+  type Previews,
   type PullsOpening,
 } from "./App";
 import { Hud } from "./Hud";
@@ -271,6 +272,7 @@ const pullsOpening: PullsOpening | undefined =
       }
     : undefined;
 
+let looking = false;
 let expanded = params.get("size") === "expanded";
 const fitRoot = () => {
   const box = document.querySelector<HTMLElement>("#app");
@@ -350,6 +352,14 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
     }
     case "typed_ahead":
       return (window.typedAhead?.shift() ?? null) as T;
+    case "quick_look":
+      looking = args?.["follow"] === true ? looking : !looking;
+      return looking as T;
+    case "close_quick_look": {
+      const was = looking;
+      looking = false;
+      return was as T;
+    }
     case "pull_requests":
       if (readFails) {
         readFails = false;
@@ -556,6 +566,16 @@ const opens: Opens = async (handler) => {
   };
 };
 
+const previews: Previews = async (handler) => {
+  window.previewEvent = (what: string) => {
+    looking = false;
+    handler(what);
+  };
+  return () => {
+    window.previewEvent = undefined;
+  };
+};
+
 const earlyMs = params.get("early") === null ? undefined : Number(params.get("early"));
 const root = document.querySelector<HTMLElement>("#app");
 const size = tauri.app.windows[0];
@@ -575,6 +595,7 @@ if (root && fixture === "quick") {
         listen={listen}
         hear={hear}
         opens={opens}
+        previews={previews}
         pulls={pullsOpening}
         earlyMs={earlyMs}
       />

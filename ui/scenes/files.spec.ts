@@ -31,7 +31,7 @@ test("AGENTS.md finds the file with its folder from home, and ⌘Enter reveals i
     .toEqual([{ command: "show_in_finder", args: { path: AGENTS } }]);
 });
 
-test("Enter opens the file, and ⌘K lists Open, Show in Finder, Copy path, Open in Terminal and the size", async ({
+test("Enter opens the file, and ⌘K lists Open, Show in Finder, Quick Look, Copy path, Open in Terminal and the size", async ({
   page,
 }) => {
   await open(page);
@@ -42,6 +42,7 @@ test("Enter opens the file, and ⌘K lists Open, Show in Finder, Copy path, Open
   await expect(page.locator(".act .act-t")).toHaveText([
     "Open",
     "Show in Finder",
+    "Quick Look",
     "Copy path",
     "Open in Terminal",
     "Expand Window",
@@ -156,4 +157,268 @@ test("a folder opens in the terminal too, and a failure is said in the footer", 
   await expect(page.locator("#ctx")).toHaveText("Ghostty did not open: no such folder.");
   await page.keyboard.press("ArrowDown");
   await expect(page.locator("#ctx")).not.toHaveText("Ghostty did not open: no such folder.");
+});
+
+const NOTES = "/Users/me/Code/lantern/docs/notes.md";
+const RELEASE = "/Users/me/Documents/Release notes.txt";
+
+test("Space after ↓ previews the file with Quick Look, follows the selection, and closes again", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("notes");
+  await expect(page.locator(".row")).toHaveCount(5);
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".row.selected .title")).toHaveText("notes.md");
+  await page.keyboard.press("Space");
+  await expect(page.locator("#q")).toHaveValue("notes");
+  await expect
+    .poll(() => sent(page, "quick_look"))
+    .toEqual([{ command: "quick_look", args: { path: NOTES, follow: false } }]);
+  await page.keyboard.press("ArrowDown");
+  await expect
+    .poll(() => sent(page, "quick_look"))
+    .toContainEqual({ command: "quick_look", args: { path: RELEASE, follow: true } });
+  await page.keyboard.press("Space");
+  await expect.poll(() => sent(page, "close_quick_look")).toHaveLength(1);
+  expect(await sent(page, "quick_look")).toHaveLength(2);
+  await expect(page.locator("#q")).toHaveValue("notes");
+});
+
+test("the preview survives Raiden losing focus to it for a moment, and keeps following ↓", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("notes");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Space");
+  await expect
+    .poll(() => sent(page, "quick_look"))
+    .toEqual([{ command: "quick_look", args: { path: NOTES, follow: false } }]);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page.waitForTimeout(500);
+  await expect(page.locator(".row.selected .title")).toHaveText("notes.md");
+  await expect(page.locator("#q")).toHaveValue("notes");
+  expect(await sent(page, "close_quick_look")).toEqual([]);
+  await page.keyboard.press("ArrowDown");
+  await expect
+    .poll(() => sent(page, "quick_look"))
+    .toContainEqual({ command: "quick_look", args: { path: RELEASE, follow: true } });
+});
+
+test("when focus does not come back, the preview ends and Raiden starts over as after any blur", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("notes");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Space");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.waitForTimeout(500);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.keyboard.press("ArrowDown");
+  await page.waitForTimeout(200);
+  expect((await sent(page, "quick_look")).filter((call) => call.args?.["follow"] === true)).toEqual(
+    [],
+  );
+  expect(await sent(page, "close_quick_look")).toHaveLength(1);
+});
+
+test("focus bouncing to the preview again and again never resets Raiden behind it", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("notes");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Space");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  for (let bounce = 0; bounce < 4; bounce += 1) {
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    await page.waitForTimeout(120);
+  }
+  await page.waitForTimeout(400);
+  await expect(page.locator(".row.selected .title")).toHaveText("notes.md");
+  await page.keyboard.press("ArrowDown");
+  await expect
+    .poll(() => sent(page, "quick_look"))
+    .toContainEqual({ command: "quick_look", args: { path: RELEASE, follow: true } });
+});
+
+test("hiding while previewing starts over at once, even if Raiden is opened again right away", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("notes");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Space");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("blur"));
+    window.previewEvent?.("hidden");
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page.keyboard.press("ArrowDown");
+  await page.waitForTimeout(200);
+  expect((await sent(page, "quick_look")).filter((call) => call.args?.["follow"] === true)).toEqual(
+    [],
+  );
+});
+
+test("after the preview's own close button, Space types again and Escape works as usual", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("release");
+  await page.keyboard.press("Meta+y");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  await page.evaluate(() => window.previewEvent?.("closed"));
+  await page.keyboard.type(" notes");
+  await expect(page.locator("#q")).toHaveValue("release notes");
+  expect(await sent(page, "quick_look")).toHaveLength(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#q")).toHaveValue("");
+  expect(await sent(page, "close_quick_look")).toEqual([]);
+});
+
+test("typing on after ⌘Y types its spaces and keeps the preview open", async ({ page }) => {
+  await open(page);
+  await page.keyboard.type("release");
+  await page.keyboard.press("Meta+y");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  await page.keyboard.type(" notes");
+  await expect(page.locator("#q")).toHaveValue("release notes");
+  expect(await sent(page, "close_quick_look")).toEqual([]);
+  expect(await sent(page, "quick_look")).toHaveLength(1);
+});
+
+test("the ⌘K menu keeps the keyboard when the preview gives it back", async ({ page }) => {
+  await open(page);
+  await page.keyboard.type("agents");
+  await page.keyboard.press("Meta+y");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  await page.keyboard.press("Meta+k");
+  await expect(page.locator(".act").first()).toBeVisible();
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page.keyboard.type("copy");
+  await expect(page.locator("#q")).toHaveValue("agents");
+  await expect(page.locator(".act .act-t")).toHaveText(["Copy path"]);
+});
+
+test("open, close, open and ↓ typed fast still end on the file the selection is on", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("notes");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Space");
+  await page.keyboard.press("ArrowDown");
+  await expect
+    .poll(async () => (await sent(page, "quick_look")).at(-1))
+    .toEqual({ command: "quick_look", args: { path: RELEASE, follow: true } });
+  const opens = (await sent(page, "quick_look")).filter((call) => call.args?.["follow"] === false);
+  expect(opens).toHaveLength(2);
+});
+
+test("↑ on the first row moves nothing, so Space still types", async ({ page }) => {
+  await open(page);
+  await page.keyboard.type("release");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.type(" notes");
+  await expect(page.locator("#q")).toHaveValue("release notes");
+  expect(await sent(page, "quick_look")).toEqual([]);
+});
+
+test("moving the mouse over other rows leaves the preview on the file it shows", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("notes");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Space");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  const other = page.locator(".row").nth(2);
+  const box = await other.boundingBox();
+  if (box) {
+    await page.mouse.move(box.x + 20, box.y + 10);
+    await page.mouse.move(box.x + 40, box.y + 12);
+  }
+  await page.waitForTimeout(200);
+  await expect(page.locator(".row.selected .title")).toHaveText("notes.md");
+  expect(await sent(page, "quick_look")).toHaveLength(1);
+});
+
+test("with the ⌘K menu open, Escape closes the preview before the menu", async ({ page }) => {
+  await open(page);
+  await page.keyboard.type("agents");
+  await page.keyboard.press("Meta+y");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  await page.keyboard.press("Meta+k");
+  await expect(page.locator(".act").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => sent(page, "close_quick_look")).toHaveLength(1);
+  await expect(page.locator(".act").first()).toBeVisible();
+});
+
+test("moving the caret after ↓ makes Space type a space again", async ({ page }) => {
+  await open(page);
+  await page.keyboard.type("releasenotes");
+  await page.keyboard.press("ArrowDown");
+  for (let step = 0; step < 5; step += 1) {
+    await page.keyboard.press("ArrowLeft");
+  }
+  await page.keyboard.press("Space");
+  await expect(page.locator("#q")).toHaveValue("release notes");
+  expect(await sent(page, "quick_look")).toEqual([]);
+});
+
+test("Space types a space in “release notes”, and again after a letter typed past ↓", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("release notes");
+  await expect(page.locator("#q")).toHaveValue("release notes");
+  await page.keyboard.press("Meta+a");
+  await page.keyboard.type("notes");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("x y");
+  await expect(page.locator("#q")).toHaveValue("notesx y");
+  expect(await sent(page, "quick_look")).toEqual([]);
+});
+
+test("⌘Y previews while typing, Escape closes the preview without hiding, and ⌘K lists Quick Look", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("agents");
+  await expect(page.locator(".row.selected .title")).toHaveText("AGENTS.md");
+  await page.keyboard.press("Meta+y");
+  await expect
+    .poll(() => sent(page, "quick_look"))
+    .toEqual([{ command: "quick_look", args: { path: AGENTS, follow: false } }]);
+  await page.keyboard.press("Escape");
+  await expect.poll(() => sent(page, "close_quick_look")).toHaveLength(1);
+  expect(await sent(page, "hide")).toEqual([]);
+  await expect(page.locator("#q")).toHaveValue("agents");
+  await page.keyboard.press("Meta+k");
+  await expect(page.locator(".act .act-t")).toHaveText([
+    "Open",
+    "Show in Finder",
+    "Quick Look",
+    "Copy path",
+    "Open in Terminal",
+    "Expand Window",
+  ]);
+  await expect(page.locator(".act").nth(2)).toContainText("Y");
 });

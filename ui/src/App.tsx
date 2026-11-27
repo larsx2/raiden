@@ -81,6 +81,8 @@ const HEADING_HEIGHT = 29.5;
 const SUGGESTIONS = 5;
 const RECENT_SHOWN = 3;
 const MOST_FOUND_ANSWERS = 5;
+const PREVIEW_FOCUS_GRACE_MS = 300;
+const CARET_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
 const NO_POSITIONS = new Uint32Array(0);
 const PRESS_MS = 120;
 const FOLLOW_SLACK = 24;
@@ -101,6 +103,7 @@ export type Call = <T>(command: string, args?: Record<string, unknown>) => Promi
 export type Listen = (handler: (event: AnswerEvent) => void) => Promise<() => void>;
 export type Hear = (handler: (keys: string) => void) => Promise<() => void>;
 export type Opens = (handler: (shown: boolean) => void) => Promise<() => void>;
+export type Previews = (handler: (what: string) => void) => Promise<() => void>;
 export type InstalledApp = { name: string; path: string; under?: string; accessory?: string };
 export type PullsOpening = PullsStart & { menu?: boolean };
 export type Listing = { apps: InstalledApp[]; catalog: string };
@@ -153,6 +156,7 @@ export function App(props: {
   listen: Listen;
   hear: Hear;
   opens?: Opens;
+  previews?: Previews;
   pulls?: PullsOpening;
   earlyMs?: number;
 }): JSX.Element {
@@ -286,6 +290,8 @@ export function App(props: {
   };
 
   let handPicked = false;
+  let browsing = false;
+  let previewing = false;
   let askedFiles = "";
   let filesAsked = Date.now();
   let rowsOutdated = false;
@@ -436,6 +442,7 @@ export function App(props: {
 
   const refresh = () => {
     handPicked = false;
+    browsing = false;
     forgetNote();
     lookForFiles(typedText());
     build(true);
@@ -455,6 +462,14 @@ export function App(props: {
     virtualizer.scrollToIndex(headingAbove ? heading : slot);
   };
 
+  const browseTo = (row: number) => {
+    const before = selected();
+    select(row);
+    if (selected() !== before) {
+      browsing = true;
+    }
+  };
+
   const selectedKey = createMemo(() => keyAt(selected()));
   createEffect(on(selectedKey, forgetNote, { defer: true }));
 
@@ -462,7 +477,7 @@ export function App(props: {
     const count = results().length;
     if (count > 0) {
       handPicked = true;
-      select(selected() + step);
+      browseTo(selected() + step);
     }
   };
 
@@ -472,7 +487,7 @@ export function App(props: {
     const at = `${event.screenX},${event.screenY}`;
     const moved = pointer !== undefined && pointer !== at;
     pointer = at;
-    if (moved && menu() === null && pressed() === null) {
+    if (moved && menu() === null && pressed() === null && !previewing) {
       handPicked = true;
       setSelected(row);
     }
@@ -810,6 +825,7 @@ export function App(props: {
       open: () => props.call("open", { path: app.path, query: typed, row }).then(reload, reload),
       showInFinder: (path) => void props.call("show_in_finder", { path }),
       copyPath: (path) => void props.call("copy_path", { path }),
+      quickLook: togglePreview,
     });
   };
 
@@ -834,6 +850,7 @@ export function App(props: {
       open: () => void props.call("open_file", { path: file.path }).catch(lookAgain),
       showInFinder: (path) => void props.call("show_in_finder", { path }).catch(lookAgain),
       copyPath: (path) => void props.call("copy_path", { path }),
+      quickLook: togglePreview,
     }),
     {
       title: "Open in Terminal",
@@ -883,6 +900,94 @@ export function App(props: {
     const extra = extraAt(row);
     return extra?.kind === "file" ? extra.file : undefined;
   };
+
+  const previewable = (row: number) => {
+    const file = fileAt(row);
+    if (file) {
+      return file.path;
+    }
+    const app = appAt(row);
+    return app?.path.startsWith("/") ? app.path : undefined;
+  };
+
+  let previews: Promise<void> = Promise.resolve();
+  let previewAsked = 0;
+
+  const inTurn = (work: () => Promise<void>) => {
+    const before = previews;
+    previews = (async () => {
+      await before;
+      await work();
+    })();
+    return previews;
+  };
+
+  const closeQuietly = async () => {
+    try {
+      await props.call("close_quick_look");
+    } catch {
+      previewing = false;
+    }
+  };
+
+  const closePreview = () => {
+    previewing = false;
+    previewAsked += 1;
+    void inTurn(closeQuietly);
+  };
+
+  const lookAt = (path: string, follow: boolean) => {
+    const asked = ++previewAsked;
+    return inTurn(async () => {
+      if (follow && asked !== previewAsked) {
+        return;
+      }
+      try {
+        const shown = await props.call<boolean | null>("quick_look", { path, follow });
+        if (asked === previewAsked) {
+          previewing = shown === true;
+        }
+      } catch {
+        if (asked === previewAsked) {
+          previewing = false;
+          if (follow) {
+            await closeQuietly();
+          }
+        }
+      }
+    });
+  };
+
+  function togglePreview(path: string | undefined): boolean {
+    if (previewing) {
+      closePreview();
+      return true;
+    }
+    if (path === undefined) {
+      return false;
+    }
+    previewing = true;
+    void lookAt(path, false);
+    return true;
+  }
+
+  createEffect(
+    on(
+      selectedKey,
+      () => {
+        if (!previewing) {
+          return;
+        }
+        const path = previewable(selected());
+        if (path === undefined) {
+          closePreview();
+        } else {
+          void lookAt(path, true);
+        }
+      },
+      { defer: true },
+    ),
+  );
 
   const rowActions = (row: number): Action[] | undefined => {
     const app = appAt(row);
@@ -1203,7 +1308,7 @@ export function App(props: {
       }
       const rows = Math.max(1, Math.floor((list?.clientHeight ?? 0) / ROW_HEIGHT));
       handPicked = true;
-      select(selected() + direction * rows);
+      browseTo(selected() + direction * rows);
     },
     move: (step: 1 | -1) => {
       if (menu()) {
@@ -1312,6 +1417,7 @@ export function App(props: {
       });
     },
     insert: (select: boolean, later?: boolean) => {
+      browsing = false;
       if (later) {
         setTimeout(() => document.hasFocus() && typeAgain(select), 0);
       } else {
@@ -1340,9 +1446,11 @@ export function App(props: {
         }
       } else if (results().length > 0) {
         handPicked = true;
-        select(last ? results().length - 1 : 0);
+        browseTo(last ? results().length - 1 : 0);
       }
     },
+    preview: () => togglePreview(previewable(selected())),
+    closePreview,
     tab: (step: 1 | -1) => {
       if (!pulls.loaded() || pulls.gate() !== null) {
         return;
@@ -1435,6 +1543,7 @@ export function App(props: {
             : "search";
 
   createEffect(on([screen, vimOn], () => enterInsert(), { defer: true }));
+  createEffect(on(screen, () => previewing && closePreview(), { defer: true }));
   createEffect(
     on(
       normal,
@@ -1468,10 +1577,15 @@ export function App(props: {
       normal: normal(),
       waiting: waitingG(),
       movable: movable(),
+      browsing,
+      previewing,
     };
   };
   const onKeyDown = (event: KeyboardEvent) => {
     keyDownAt = event.timeStamp;
+    if (CARET_KEYS.has(event.key)) {
+      browsing = false;
+    }
     if (event.repeat && event.key === "Enter" && covered()) {
       event.preventDefault();
       return;
@@ -1529,6 +1643,12 @@ export function App(props: {
   const takeTypedAhead = () =>
     void catchUp(() => props.call<Typed[] | null>("typed_ahead"), typedAhead);
   const onFocus = () => {
+    if (leaving !== undefined) {
+      clearTimeout(leaving);
+      leaving = undefined;
+      (menu() ? menuField : field)?.focus();
+      return;
+    }
     if (!menu()) {
       enterInsert();
     }
@@ -1553,8 +1673,41 @@ export function App(props: {
     );
   };
 
+  let leaving: ReturnType<typeof setTimeout> | undefined;
+
+  const leaveNow = () => {
+    if (leaving !== undefined) {
+      clearTimeout(leaving);
+      leaving = undefined;
+    }
+    leave();
+  };
+
   const onBlur = () => {
+    if (leaving !== undefined) {
+      clearTimeout(leaving);
+    }
+    if (previewing) {
+      leaving = setTimeout(leaveNow, PREVIEW_FOCUS_GRACE_MS);
+      return;
+    }
+    leaving = undefined;
+    leave();
+  };
+
+  const onPreview = (what: string) => {
+    previewing = false;
+    previewAsked += 1;
+    if (what === "hidden" && leaving !== undefined) {
+      leaveNow();
+    }
+  };
+
+  const leave = () => {
     pointer = undefined;
+    if (previewing) {
+      closePreview();
+    }
     askedFiles = "";
     if (clip.open()) {
       closeClipboard();
@@ -1580,6 +1733,7 @@ export function App(props: {
   let stopListening: (() => void) | undefined;
   let stopHearing: (() => void) | undefined;
   let stopOpening: (() => void) | undefined;
+  let stopPreviews: (() => void) | undefined;
   onMount(() => {
     window.addEventListener("blur", onBlur);
     document.addEventListener("keydown", onKeyDown);
@@ -1610,6 +1764,9 @@ export function App(props: {
       .then((stop) => {
         stopOpening = stop;
       });
+    void (async () => {
+      stopPreviews = await props.previews?.(onPreview);
+    })();
     void asking.refreshAccounts();
     void asking.refreshChoice();
     readVim();
@@ -1628,6 +1785,7 @@ export function App(props: {
     stopListening?.();
     stopHearing?.();
     stopOpening?.();
+    stopPreviews?.();
   });
 
   let following = true;
@@ -1732,7 +1890,12 @@ export function App(props: {
       spellcheck={false}
       readOnly={normal()}
       classList={{ dim: normal() }}
-      onMouseDown={() => normal() && enterInsert()}
+      onMouseDown={() => {
+        browsing = false;
+        if (normal()) {
+          enterInsert();
+        }
+      }}
       aria-label={
         clip.open()
           ? CLIPBOARD_PLACEHOLDER

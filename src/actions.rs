@@ -114,9 +114,13 @@ pub async fn open_file(
     }
 }
 
+fn shown_by_raiden(path: &str, showed: impl FnOnce(&str) -> bool) -> bool {
+    is_app_folder(path) || (showed(path) && is_found_file(path))
+}
+
 #[tauri::command]
 pub fn show_in_finder(app: AppHandle, files: State<'_, Files>, path: String) -> Result<(), String> {
-    if !is_app_folder(&path) && !was_found(&files, &path) {
+    if !shown_by_raiden(&path, |shown| files.showed(shown)) {
         return Err(format!(
             "Raiden shows only apps and the files it finds in Finder, and {path} is neither."
         ));
@@ -126,6 +130,41 @@ pub fn show_in_finder(app: AppHandle, files: State<'_, Files>, path: String) -> 
     NSWorkspace::sharedWorkspace()
         .activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&[url]));
     Ok(())
+}
+
+async fn on_main<T: Send + 'static>(
+    app: &AppHandle,
+    work: impl FnOnce(&AppHandle) -> T + Send + 'static,
+) -> Result<T, String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(work(&handle));
+    })
+    .map_err(|error| error.to_string())?;
+    receiver
+        .await
+        .map_err(|_| "Raiden's window did not answer.".to_owned())
+}
+
+#[tauri::command]
+pub async fn quick_look(
+    app: AppHandle,
+    files: State<'_, Files>,
+    path: String,
+    follow: bool,
+) -> Result<bool, String> {
+    if !shown_by_raiden(&path, |shown| files.showed(shown)) {
+        return Err(format!(
+            "Raiden previews only apps and the files it finds, and {path} is neither."
+        ));
+    }
+    on_main(&app, move |app| crate::quick_look::look(app, &path, follow)).await
+}
+
+#[tauri::command]
+pub async fn close_quick_look(app: AppHandle) -> Result<bool, String> {
+    on_main(&app, |_| crate::quick_look::close()).await
 }
 
 fn editor_for(file: &Path) -> Option<PathBuf> {
@@ -156,7 +195,7 @@ pub fn open_in_editor(file: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_app_folder, is_found_file, web_link};
+    use super::{is_app_folder, is_found_file, shown_by_raiden, web_link};
 
     #[test]
     fn opens_only_web_links() {
@@ -219,5 +258,33 @@ mod tests {
         assert!(!is_found_file(&format!("{home}/Library/Preferences")));
         assert!(!is_found_file("/etc/hosts"));
         assert!(!is_found_file("found.txt"));
+    }
+
+    #[test]
+    fn previews_and_reveals_only_apps_and_files_search_showed() {
+        let home = std::env::var("HOME").unwrap();
+        let folder =
+            std::path::Path::new(&home).join(format!("raiden-shown-{}", std::process::id()));
+        let app = folder.join("Shown.app");
+        std::fs::create_dir_all(&app).unwrap();
+        let file = folder.join("shown.txt");
+        std::fs::write(&file, "").unwrap();
+        let app = app.to_str().unwrap();
+        let file = file.to_str().unwrap();
+        let app_unshown = shown_by_raiden(app, |_| false);
+        let file_unshown = shown_by_raiden(file, |_| false);
+        let file_shown = shown_by_raiden(file, |shown| shown == file);
+        let other_shown = shown_by_raiden(file, |shown| shown != file);
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert!(app_unshown);
+        assert!(!file_unshown);
+        assert!(file_shown);
+        assert!(!other_shown);
+        assert!(!shown_by_raiden("/etc/hosts", |_| true));
+        assert!(!shown_by_raiden(
+            &format!("{home}/Library/Preferences"),
+            |_| true
+        ));
+        assert!(!shown_by_raiden("shown.txt", |_| true));
     }
 }
