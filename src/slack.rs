@@ -34,6 +34,9 @@ struct Inner {
     // Held while one catalog fetch runs, so a burst of cold searches does not
     // each start their own refresh.
     fetching: Mutex<()>,
+    // Held while a sign-in writes the token and a sign-out clears it, so the
+    // two never interleave and leave the Keychain and memory disagreeing.
+    account_change: Mutex<()>,
     // Bumped on every sign-in and sign-out, so a slow fetch or save started for
     // an earlier account can tell it has been superseded and drop its result.
     account: AtomicU64,
@@ -163,7 +166,10 @@ pub async fn slack_open(app: AppHandle, url: String) -> Result<(), String> {
     crate::hide_panel(&app);
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
+        // Re-check the host on the URL macOS actually parsed, so a fragment or
+        // query that fooled the string check cannot reach a non-Slack site.
         let opened = NSURL::URLWithString(&NSString::from_str(&link))
+            .filter(|parsed| is_slack_url(parsed))
             .is_some_and(|parsed| NSWorkspace::sharedWorkspace().openURL(&parsed));
         let _ = sender.send(opened);
     })
@@ -186,23 +192,37 @@ fn save_token(inner: &Inner, token: &str) -> SlackView {
         // claiming Raiden is signed in.
         Err(problem) => return SlackView::blocked(problem),
     };
-    if store_token(token).is_err() {
-        return SlackView::blocked(Problem::failed("the Keychain would not keep the token"));
+    {
+        // Check, store and publish as one step against any sign-out, so a
+        // sign-out that lands first is never undone by this write.
+        let _change = inner
+            .account_change
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if inner.account.load(Ordering::SeqCst) != account {
+            return SlackView::blocked(Problem::signed_out());
+        }
+        if store_token(token).is_err() {
+            return SlackView::blocked(Problem::failed("the Keychain would not keep the token"));
+        }
+        *inner.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.to_owned());
+        *inner.catalog.lock().unwrap_or_else(|e| e.into_inner()) = Some(catalog);
     }
-    // A newer sign-in or sign-out since this one began must win.
-    if inner.account.load(Ordering::SeqCst) != account {
-        return SlackView::blocked(Problem::signed_out());
-    }
-    *inner.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.to_owned());
-    *inner.catalog.lock().unwrap_or_else(|e| e.into_inner()) = Some(catalog);
     search(inner, "")
 }
 
 fn sign_out(inner: &Inner) -> SlackView {
-    inner.account.fetch_add(1, Ordering::SeqCst);
-    let gone = forget_token();
-    *inner.token.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    *inner.catalog.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let gone = {
+        let _change = inner
+            .account_change
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        inner.account.fetch_add(1, Ordering::SeqCst);
+        let gone = forget_token();
+        *inner.token.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *inner.catalog.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        gone
+    };
     if gone {
         SlackView::signed_out()
     } else {
@@ -407,18 +427,21 @@ fn encode(text: &str) -> String {
 // of the Keychain, from ever being run. The upper bound stays within what the
 // Keychain tool accepts on stdin.
 fn valid_token(token: &str) -> bool {
-    looks_like_token(token)
-        && token.len() <= 200
+    token.starts_with("xox")
+        && (20..=200).contains(&token.len())
         && token
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
-// Anything a person might paste meaning to hand over a token, so it is kept out
-// of the search endpoint even before it is known to be well formed.
+// True if any word of the text is token-shaped, so a token pasted into search,
+// even behind "Bearer " or in quotes, is kept out of the search endpoint
+// before it could reach curl's argv.
 fn looks_like_token(text: &str) -> bool {
-    let text = text.trim();
-    text.starts_with("xox") && text.len() >= 12
+    text.split(char::is_whitespace).any(|word| {
+        let word = word.trim_matches(['"', '\'']);
+        word.starts_with("xox") && word.len() >= 12
+    })
 }
 
 fn now() -> u64 {
@@ -490,7 +513,9 @@ fn forget_token() -> bool {
         Some((0, _)) => true,
         // Exit 44 is "item not found": nothing to remove is still signed out.
         Some((44, _)) => true,
-        _ => token().is_none(),
+        // Any other outcome, including a timeout, is a real failure: do not
+        // claim the token is gone when it may still be there.
+        _ => false,
     }
 }
 
@@ -540,12 +565,21 @@ fn safe_slack_link(url: &str) -> Result<&str, String> {
     let link = url.trim();
     let clean = !link.chars().any(|c| c.is_whitespace() || c.is_control());
     let allowed = match link.split_once("://") {
-        Some(("slack", rest)) => {
-            rest.starts_with("channel?") || rest.starts_with("user?") || rest.starts_with("team")
+        Some(("slack", rest)) => rest.starts_with("channel?") || rest.starts_with("user?"),
+        // The authority ends at the first of / ? #; take only that, drop any
+        // userinfo before @ and any :port, so a fragment or query cannot smuggle
+        // ".slack.com" past the host check.
+        Some(("https", rest)) => {
+            let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+            let host = authority
+                .rsplit('@')
+                .next()
+                .unwrap_or("")
+                .split(':')
+                .next()
+                .unwrap_or("");
+            host == "slack.com" || host.ends_with(".slack.com")
         }
-        Some(("https", rest)) => rest
-            .split_once('/')
-            .is_some_and(|(host, _)| host == "slack.com" || host.ends_with(".slack.com")),
         _ => false,
     };
     if clean && allowed {
@@ -554,6 +588,20 @@ fn safe_slack_link(url: &str) -> Result<&str, String> {
         Err(format!(
             "Raiden opens only Slack links, and {url} is not one."
         ))
+    }
+}
+
+// The same check against the host macOS parsed from the URL, as a second gate
+// right before it opens.
+fn is_slack_url(url: &NSURL) -> bool {
+    let scheme = url.scheme().map(|s| s.to_string().to_ascii_lowercase());
+    match scheme.as_deref() {
+        Some("slack") => true,
+        Some("https") => url
+            .host()
+            .map(|host| host.to_string().to_ascii_lowercase())
+            .is_some_and(|host| host == "slack.com" || host.ends_with(".slack.com")),
+        _ => false,
     }
 }
 
@@ -651,6 +699,9 @@ mod tests {
     #[test]
     fn a_pasted_token_is_kept_out_of_the_search_endpoint() {
         assert!(looks_like_token("xoxp-123456789"));
+        // Even wrapped the way people paste it.
+        assert!(looks_like_token("Bearer xoxp-123456789"));
+        assert!(looks_like_token("\"xoxp-123456789\""));
         assert!(!looks_like_token("standup notes"));
         assert!(!looks_like_token("xox"));
     }
@@ -664,6 +715,12 @@ mod tests {
         assert!(safe_slack_link("https://evil.com/slack").is_err());
         assert!(safe_slack_link("slack://channel?id=C\n evil").is_err());
         assert!(safe_slack_link("file:///etc/passwd").is_err());
+        // A fragment or query must not smuggle the suffix past the host check.
+        assert!(safe_slack_link("https://evil.com#.slack.com/x").is_err());
+        assert!(safe_slack_link("https://evil.com?.slack.com/x").is_err());
+        assert!(safe_slack_link("https://slack.com@evil.com/x").is_err());
+        assert!(safe_slack_link("https://x.slack.com.evil.com/x").is_err());
+        assert!(safe_slack_link("slack://teamsy?evil").is_err());
     }
 
     #[test]

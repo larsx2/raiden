@@ -92,9 +92,7 @@ export function createSlack(options: { call: Call }) {
     });
   };
 
-  const run = (text: string) => {
-    const mine = opened;
-    const query = queried;
+  const run = (text: string, mine = opened, query = queried) => {
     const current = () => mine === opened && query === queried;
     call<SlackView>("slack_search", { query: text })
       // Only the newest query wins, so a slow reply cannot replace newer hits
@@ -134,6 +132,8 @@ export function createSlack(options: { call: Call }) {
   const filter = (text: string) => {
     // Each edit retires any query still in flight, so its late reply is dropped.
     queried++;
+    const mine = opened;
+    const query = queried;
     batch(() => {
       setQuery(text);
       setSelected(0);
@@ -142,7 +142,9 @@ export function createSlack(options: { call: Call }) {
       return;
     }
     clearTimeout(timer);
-    timer = setTimeout(() => run(text.trim()), SEARCH_WAIT);
+    // Bind the generation now, at schedule time, so a sign-out before the timer
+    // fires retires this search instead of it running under the new state.
+    timer = setTimeout(() => run(text.trim(), mine, query), SEARCH_WAIT);
   };
 
   const move = (by: number) => {
@@ -215,6 +217,7 @@ export function createSlack(options: { call: Call }) {
 
   const signOut = () => {
     const mine = ++opened;
+    clearTimeout(timer);
     call<SlackView>("slack_sign_out")
       .then((view) => {
         if (mine === opened) {
