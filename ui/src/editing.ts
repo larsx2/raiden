@@ -25,27 +25,29 @@ const COUNT_LIMIT = 999;
 
 export const freshEditor = (): Editor => ({ keys: [], register: "", undo: [] });
 
-const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
-const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+const characters = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+const characterAt = (text: string, at: number) => characters.segment(text).containing(at);
 
 export function after(text: string, at: number): number {
   if (at >= text.length) {
     return text.length;
   }
-  return isHigh(text.charCodeAt(at)) && isLow(text.charCodeAt(at + 1)) ? at + 2 : at + 1;
+  const found = characterAt(text, at);
+  return found ? found.index + found.segment.length : at + 1;
 }
 
 export function before(text: string, at: number): number {
   if (at <= 0) {
     return 0;
   }
-  return isLow(text.charCodeAt(at - 1)) && isHigh(text.charCodeAt(at - 2)) ? at - 2 : at - 1;
+  return characterAt(text, at - 1)?.index ?? at - 1;
 }
 
 const lastChar = (text: string) => before(text, text.length);
 
 const charStart = (text: string, at: number) =>
-  at > 0 && isLow(text.charCodeAt(at)) && isHigh(text.charCodeAt(at - 1)) ? at - 1 : at;
+  at >= text.length ? at : (characterAt(text, at)?.index ?? at);
 
 const rest = (text: string, at: number) => Math.min(Math.max(0, at), lastChar(text));
 

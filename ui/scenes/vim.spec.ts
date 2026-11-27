@@ -633,6 +633,8 @@ test.describe("editing the question in Ask AI", () => {
     await toNormal(page);
     await page.keyboard.press("j");
     await expect.poll(async () => (await answerScroll(page))?.top ?? 0).toBeGreaterThanOrEqual(60);
+    await page.keyboard.press("k");
+    await expect.poll(async () => (await answerScroll(page))?.top).toBe(0);
     await expect(page.locator("#q")).toHaveValue("more");
   });
 

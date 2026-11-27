@@ -170,11 +170,16 @@ describe("keys left for the screen", () => {
     expect(tokenOf([], { key: "Enter" })).toBeUndefined();
   });
 
-  it("emoji count as one character", () => {
+  it("emoji, flags and accented letters count as one character", () => {
     expect(shown(type("a😀b", 1, "x"))).toBe("a|b");
     expect(shown(type("a😀b", 0, "l"))).toBe("a|😀b");
     expect(shown(type("a😀b", 0, "ll"))).toBe("a😀|b");
     expect(shown(type("a 😀😀 b", 0, "ex"))).toBe("a 😀| b");
     expect(shown(type("a 😀😀 b", 0, "cw"))).toBe("| 😀😀 b");
+    expect(shown(type("a🇲🇽b", 1, "x"))).toBe("a|b");
+    expect(shown(type("a👍🏽b", 0, "lx"))).toBe("a|b");
+    expect(shown(type("ae\u0301b", 1, "x"))).toBe("a|b");
+    expect(shown(type("ae\u0301b", 1, "rx"))).toBe("a|xb");
+    expect(shown(type("ae\u0301b", 0, "ll"))).toBe("ae\u0301|b");
   });
 });
