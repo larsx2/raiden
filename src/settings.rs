@@ -111,6 +111,7 @@ struct Live {
     pull_requests: Mutex<bool>,
     vim: Mutex<bool>,
     terminal: Mutex<Option<Terminal>>,
+    fixer_key: Mutex<Option<String>>,
     seen: Mutex<Stamp>,
 }
 
@@ -125,6 +126,7 @@ impl Live {
             pull_requests: *self.pull_requests.lock().ok()?,
             vim: *self.vim.lock().ok()?,
             terminal: *self.terminal.lock().ok()?,
+            fixer_key: self.fixer_key.lock().ok()?.clone(),
         })
     }
 
@@ -139,6 +141,34 @@ impl Live {
 fn live(app: &AppHandle) -> Result<State<'_, Live>, String> {
     app.try_state::<Live>()
         .ok_or_else(|| "Raiden has not read its settings yet".to_owned())
+}
+
+pub fn fixer_key(app: &AppHandle) -> Option<String> {
+    app.try_state::<Live>()?.fixer_key.lock().ok()?.clone()
+}
+
+#[tauri::command]
+pub fn set_fixer_key(app: AppHandle, remove: bool) -> Result<Option<String>, String> {
+    let key = if remove {
+        None
+    } else {
+        Some(raiden_core::rates::fixer_key(
+            &crate::actions::copied_text(),
+        )?)
+    };
+    let live = live(&app)?;
+    let mut kept = live
+        .fixer_key
+        .lock()
+        .map_err(|_| "Raiden lost track of its settings")?;
+    live.files
+        .write(settings::FIXER_KEY, key.clone().unwrap_or_default())?;
+    *kept = key;
+    Ok(kept.as_deref().map(key_end))
+}
+
+fn key_end(key: &str) -> String {
+    format!("…{}", &key[key.len().saturating_sub(4)..])
 }
 
 pub fn ai(app: &AppHandle) -> Provider {
@@ -280,6 +310,7 @@ pub struct View {
     terminals: Vec<crate::terminals::Listed>,
     file: String,
     at_login: AtLogin,
+    fixer_key: Option<String>,
 }
 
 #[tauri::command]
@@ -308,6 +339,7 @@ pub async fn settings_view(
         terminals: crate::terminals::listed(),
         file: settings::shown_path(&live.files.settings, &home),
         at_login: crate::login::at_login(live.files.development),
+        fixer_key: current.fixer_key.as_deref().map(key_end),
     })
 }
 
@@ -683,6 +715,7 @@ pub fn start(app: &AppHandle, development: bool) {
         pull_requests: Mutex::new(current.pull_requests),
         vim: Mutex::new(current.vim),
         terminal: Mutex::new(current.terminal),
+        fixer_key: Mutex::new(current.fixer_key),
         seen: Mutex::new(seen),
     });
     let app = app.clone();
@@ -733,6 +766,9 @@ fn catch_up(app: &AppHandle, live: &Live) {
     }
     if let Ok(mut terminal) = live.terminal.lock() {
         *terminal = wanted.terminal;
+    }
+    if let Ok(mut fixer_key) = live.fixer_key.lock() {
+        fixer_key.clone_from(&wanted.fixer_key);
     }
     let changes: Vec<Change> = [
         Change {

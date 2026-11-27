@@ -13,6 +13,13 @@ fn copy(text: &str) -> bool {
     unsafe { board.setString_forType(&NSString::from_str(text), NSPasteboardTypeString) }
 }
 
+pub fn copied_text() -> String {
+    let board = NSPasteboard::generalPasteboard();
+    unsafe { board.stringForType(NSPasteboardTypeString) }
+        .map(|text| text.to_string())
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub fn copy_path(path: String) -> Result<(), String> {
     if copy(&path) {

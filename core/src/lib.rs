@@ -10,6 +10,7 @@ pub mod folders;
 pub mod login;
 pub mod probe;
 pub mod pulls;
+pub mod rates;
 pub mod search;
 pub mod settings;
 pub mod speed;

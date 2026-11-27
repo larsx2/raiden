@@ -141,6 +141,8 @@ test.describe("the rows", () => {
       "Answers come from",
       "Effort",
       "Fix grammar",
+      "Conversions",
+      "Currency rates",
       "File",
       "Settings file",
     ]);
@@ -156,6 +158,7 @@ test.describe("the rows", () => {
     await expect(row(page, "ai").locator("button.on")).toHaveText("Claude");
     await expect(row(page, "effort").locator(".value")).toHaveText("Low");
     await expect(row(page, "grammar").locator(".value")).toHaveText("Claude");
+    await expect(row(page, "currency").locator(".value")).toHaveText("ECB");
     await expect(row(page, "file").locator(".path")).toHaveText("~/.config/raiden/raiden.toml");
     await expect(page.locator("#ctx")).toHaveText("Saved to raiden.toml as you change things");
   });
@@ -183,10 +186,12 @@ test.describe("the rows", () => {
     await expect(page.locator(".set.selected .name")).toHaveText("Fix grammar");
     await expect(footer).toBeHidden();
     await page.keyboard.press("ArrowDown");
+    await expect(footer).toContainText("Use Fixer key from clipboard");
+    await page.keyboard.press("ArrowDown");
     await expect(footer).toContainText("Open settings file");
     await page.keyboard.press("ArrowDown");
     await expect(page.locator(".set.selected .name")).toHaveText("Settings file");
-    for (const _ of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
+    for (const _ of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
       await page.keyboard.press("ArrowUp");
     }
     await expect(page.locator(".set.selected .name")).toHaveText("Hotkey");
@@ -247,6 +252,7 @@ test.describe("the rows", () => {
       "Choose terminal",
       "Turn on Vim keys",
       "Change effort to Medium",
+      "Use Fixer key from clipboard",
       "Open settings file⌘O",
       "Expand Window⌘⇧E",
     ]);
@@ -393,6 +399,37 @@ test.describe("the rows", () => {
     await page.keyboard.press("Meta+Comma");
     await expect(row(page, "hotkey").locator("kbd")).toHaveText(["⌃", "⌥", "Space"]);
     await expect(row(page, "ai").locator("button.on")).toHaveText("ChatGPT");
+  });
+});
+
+test.describe("currency rates", () => {
+  test("Enter saves the Fixer key that was copied, and Enter again removes it", async ({
+    page,
+  }) => {
+    await openSettings(page, "&copied=key");
+    await page.keyboard.type("fixer");
+    await page.keyboard.press("Enter");
+    await expect(row(page, "currency").locator(".value")).toHaveText("Fixer …c314");
+    await expect(row(page, "currency").locator(".hint")).toHaveText(
+      "Live rates from Fixer, saved in raiden.toml",
+    );
+    await expect(page.locator("#primary")).toContainText("Remove Fixer key");
+    await page.keyboard.press("Enter");
+    await expect(row(page, "currency").locator(".value")).toHaveText("ECB");
+    expect(await sent(page, "set_fixer_key")).toEqual([
+      { command: "set_fixer_key", args: { remove: false } },
+      { command: "set_fixer_key", args: { remove: true } },
+    ]);
+  });
+
+  test("anything else on the clipboard is refused with what to copy", async ({ page }) => {
+    await openSettings(page);
+    await page.keyboard.type("fixer");
+    await page.keyboard.press("Enter");
+    await expect(row(page, "currency").locator(".hint.warn")).toHaveText(
+      "Copy a Fixer API key first: 32 letters and digits from fixer.io's dashboard",
+    );
+    await expect(row(page, "currency").locator(".value")).toHaveText("ECB");
   });
 });
 

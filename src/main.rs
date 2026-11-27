@@ -15,6 +15,7 @@ mod memory;
 mod paste;
 mod picks;
 mod pulls;
+mod rates;
 mod settings;
 mod sizes;
 mod spotlight;
@@ -467,6 +468,7 @@ fn launch(rows: Option<usize>, development: bool) {
             settings::vim_keys,
             settings::set_vim_keys,
             settings::choose_terminal,
+            settings::set_fixer_key,
             terminals::open_in_terminal,
             grammar::fix_grammar,
             hud::hud_message,
@@ -476,6 +478,7 @@ fn launch(rows: Option<usize>, development: bool) {
             pulls::pull_requests_avatar,
             pulls::pull_requests_pin,
             pulls::pull_requests_context,
+            rates::currency_rates,
             sizes::window_size,
             sizes::expand_window
         ])

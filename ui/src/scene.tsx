@@ -148,6 +148,7 @@ const settingsFile = {
   hotkey: params.get("hotkey") ?? "⌥Space",
   clipboardHotkey: params.get("clipboardhotkey") ?? "⌃⌥V",
   atLogin: { on: params.get("login") !== "off", canChange: true, note: null } as AtLogin,
+  fixerKey: null as string | null,
 };
 window.editSettings = (edit) => {
   if (edit.hotkey) {
@@ -439,6 +440,7 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
         terminals: fixtureTerminals,
         file: "~/.config/raiden/raiden.toml",
         atLogin: settingsFile.atLogin,
+        fixerKey: settingsFile.fixerKey,
       };
       return view as T;
     }
@@ -477,6 +479,15 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
         throw "Ghostty did not open: no such folder.";
       }
       return null as T;
+    case "set_fixer_key":
+      if (args?.["remove"] === true) {
+        settingsFile.fixerKey = null;
+      } else if (params.get("copied") === "key") {
+        settingsFile.fixerKey = "…c314";
+      } else {
+        throw "Copy a Fixer API key first: 32 letters and digits from fixer.io's dashboard";
+      }
+      return settingsFile.fixerKey as T;
     case "set_vim_keys":
       vimKeys = args?.["on"] === true;
       return vimKeys as T;
