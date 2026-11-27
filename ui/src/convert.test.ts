@@ -27,7 +27,7 @@ describe("convert", () => {
     expect(convert("100 usd to mxn", RATES)).toEqual({
       from: "100.00 USD",
       to: "1,800.00 MXN",
-      value: "1,800.00",
+      value: "1800.00",
     });
     expect(convert("$90 to eur", RATES)?.to).toBe("81.00 EUR");
     expect(convert("10 euros in gbp", RATES)?.to).toBe("8.89 GBP");

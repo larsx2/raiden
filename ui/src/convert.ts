@@ -177,6 +177,6 @@ export function convert(text: string, rates: Rates = {}): Conversion | undefined
   return {
     from: `${shown(amount, from.kind)} ${from.symbol}`,
     to: `${shown(value, to.kind)} ${to.symbol}`,
-    value: shown(value, to.kind),
+    value: to.kind === "currency" ? value.toFixed(2) : shown(value, to.kind),
   };
 }

@@ -479,6 +479,8 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
         throw "Ghostty did not open: no such folder.";
       }
       return null as T;
+    case "currency_rates":
+      return { USD: 1, EUR: 0.9, MXN: 18 } as T;
     case "set_fixer_key":
       if (args?.["remove"] === true) {
         settingsFile.fixerKey = null;
