@@ -512,6 +512,7 @@ export function App(props: {
   let startOverOnHide = false;
 
   const leaveAnswer = () => {
+    editor = freshEditor();
     asking.leave();
     batch(() => {
       setAnswering(false);
@@ -1446,8 +1447,7 @@ export function App(props: {
   };
 
   const enterInsert = () => {
-    const opened = editor.opened ?? (normal() && chatting() && field ? lineOf(field) : undefined);
-    editor = { ...editor, keys: [], opened };
+    editor = { ...editor, keys: [] };
     batch(() => {
       setWaitingG(false);
       setMode("insert");
@@ -1508,7 +1508,6 @@ export function App(props: {
       [screen, vimOn],
       () => {
         enterInsert();
-        editor = freshEditor();
       },
       { defer: true },
     ),
@@ -1566,7 +1565,7 @@ export function App(props: {
       held = stepsBack(event, now) || switchesToInsert(event, now) ? event.key : "";
     }
     const handled = handleKey(event, now, actions);
-    if (!event.repeat && now.normal && !normal()) {
+    if (!event.repeat && now.normal && !normal() && !event.metaKey) {
       held = event.key;
     }
     if (handled) {
@@ -1826,6 +1825,11 @@ export function App(props: {
                 ? "Ask a follow-up"
                 : "Search"
       }
+      onBeforeInput={() => {
+        if (chatting() && field && editor.opened === undefined) {
+          editor = { ...editor, opened: lineOf(field) };
+        }
+      }}
       onInput={onInput}
     />
   ) as HTMLInputElement;

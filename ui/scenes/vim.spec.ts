@@ -653,6 +653,28 @@ test.describe("editing the question in Ask AI", () => {
     await expect(page.locator("#q")).toHaveValue("why is the sky ");
   });
 
+  test("u takes back a question typed before the first Esc, and survives Settings", async ({
+    page,
+  }) => {
+    await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
+    await page.waitForLoadState("load");
+    await page.locator(`#ai[data-phase="done"]`).waitFor();
+    await page.keyboard.type("first try");
+    await toNormal(page);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#q")).toHaveValue("");
+    await page.keyboard.press("Meta+Comma");
+    await expect(page.locator("#q")).toHaveAttribute("placeholder", "Search settings");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#q")).toHaveAttribute("placeholder", "Ask a follow-up");
+    await toNormal(page);
+    await page.keyboard.press("u");
+    await expect(page.locator("#q")).toHaveValue("first try");
+    await page.keyboard.press("u");
+    await expect(page.locator("#q")).toHaveValue("");
+  });
+
   test("u takes back typing that began with a click", async ({ page }) => {
     await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
     await page.waitForLoadState("load");

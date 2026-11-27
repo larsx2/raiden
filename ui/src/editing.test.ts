@@ -181,5 +181,11 @@ describe("keys left for the screen", () => {
     expect(shown(type("ae\u0301b", 1, "x"))).toBe("a|b");
     expect(shown(type("ae\u0301b", 1, "rx"))).toBe("a|xb");
     expect(shown(type("ae\u0301b", 0, "ll"))).toBe("ae\u0301|b");
+    expect(shown(type("a 😀 b", 0, "ee"))).toBe("a 😀 |b");
+    expect(shown(type("cafe\u0301 bar", 0, "w"))).toBe("cafe\u0301 |bar");
+    expect(shown(type("cafe\u0301 bar", 0, "ee"))).toBe("cafe\u0301 ba|r");
+    expect(shown(type("cafe\u0301 bar", 6, "b"))).toBe("|cafe\u0301 bar");
+    expect(shown(type("cafe\u0301 bar", 1, "diw"))).toBe("| bar");
+    expect(shown(type("नमस्ते दुनिया", 0, "dw"))).toBe("|दुनिया");
   });
 });

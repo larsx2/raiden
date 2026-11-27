@@ -53,37 +53,54 @@ const rest = (text: string, at: number) => Math.min(Math.max(0, at), lastChar(te
 
 export const blockOf = (line: Line): [number, number] => [line.at, after(line.text, line.at)];
 
-const kind = (char: string | undefined, big: boolean): number => {
-  if (char === undefined || /\s/.test(char)) {
+const JOINS = /^[\p{M}\u200d]$/u;
+const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
+const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+const pointAt = (text: string, at: number) => String.fromCodePoint(text.codePointAt(at) ?? 0);
+
+const joined = (text: string, at: number) =>
+  (isLow(text.charCodeAt(at)) && isHigh(text.charCodeAt(at - 1))) || JOINS.test(pointAt(text, at));
+
+function kindAt(text: string, at: number, big: boolean): number {
+  if (at < 0 || at >= text.length) {
     return 0;
   }
-  return big || /[\p{L}\p{N}_]/u.test(char) ? 1 : 2;
-};
+  let start = at;
+  while (start > 0 && joined(text, start)) {
+    start--;
+  }
+  const char = pointAt(text, start);
+  if (/\s/.test(char)) {
+    return 0;
+  }
+  return big || /[\p{L}\p{N}\p{M}_]/u.test(char) ? 1 : 2;
+}
 
 function wordStart(text: string, at: number, big: boolean): number {
   let next = at;
-  const start = kind(text[next], big);
+  const start = kindAt(text, next, big);
   if (start !== 0) {
-    while (next < text.length && kind(text[next], big) === start) {
+    while (next < text.length && kindAt(text, next, big) === start) {
       next++;
     }
   }
-  while (next < text.length && kind(text[next], big) === 0) {
+  while (next < text.length && kindAt(text, next, big) === 0) {
     next++;
   }
   return next;
 }
 
 function wordEnd(text: string, at: number, big: boolean): number {
-  let next = at + 1;
-  while (next < text.length && kind(text[next], big) === 0) {
+  let next = after(text, at);
+  while (next < text.length && kindAt(text, next, big) === 0) {
     next++;
   }
   if (next >= text.length) {
     return Math.max(at, text.length - 1);
   }
-  const found = kind(text[next], big);
-  while (next + 1 < text.length && kind(text[next + 1], big) === found) {
+  const found = kindAt(text, next, big);
+  while (next + 1 < text.length && kindAt(text, next + 1, big) === found) {
     next++;
   }
   return next;
@@ -91,14 +108,14 @@ function wordEnd(text: string, at: number, big: boolean): number {
 
 function wordBack(text: string, at: number, big: boolean): number {
   let next = at - 1;
-  while (next > 0 && kind(text[next], big) === 0) {
+  while (next > 0 && kindAt(text, next, big) === 0) {
     next--;
   }
   if (next <= 0) {
     return 0;
   }
-  const found = kind(text[next], big);
-  while (next > 0 && kind(text[next - 1], big) === found) {
+  const found = kindAt(text, next, big);
+  while (next > 0 && kindAt(text, next - 1, big) === found) {
     next--;
   }
   return next;
@@ -219,13 +236,13 @@ function wordObject(text: string, at: number, around: boolean, big: boolean): Ra
   if (text === "") {
     return { from: 0, to: 0 };
   }
-  const here = kind(text[at], big);
+  const here = kindAt(text, at, big);
   let from = at;
   let to = at + 1;
-  while (from > 0 && kind(text[from - 1], big) === here) {
+  while (from > 0 && kindAt(text, from - 1, big) === here) {
     from--;
   }
-  while (to < text.length && kind(text[to], big) === here) {
+  while (to < text.length && kindAt(text, to, big) === here) {
     to++;
   }
   if (!around) {
@@ -235,13 +252,13 @@ function wordObject(text: string, at: number, around: boolean, big: boolean): Ra
     return { from, to: to < text.length ? wordEnd(text, to - 1, big) + 1 : to };
   }
   let spaced = to;
-  while (spaced < text.length && kind(text[spaced], big) === 0) {
+  while (spaced < text.length && kindAt(text, spaced, big) === 0) {
     spaced++;
   }
   if (spaced > to) {
     return { from, to: spaced };
   }
-  while (from > 0 && kind(text[from - 1], big) === 0) {
+  while (from > 0 && kindAt(text, from - 1, big) === 0) {
     from--;
   }
   return { from, to };
@@ -385,7 +402,7 @@ function withOperator(editor: Editor, line: Line, parsed: Parsed): Edited | unde
   }
   const big = parsed.command === "W";
   const motion =
-    operator === "c" && (parsed.command === "w" || big) && kind(text[at], big) !== 0
+    operator === "c" && (parsed.command === "w" || big) && kindAt(text, at, big) !== 0
       ? changeWord(text, at, parsed.count, big)
       : moveBy(parsed.command, parsed.char, text, at, parsed.count, editor.find);
   if (!motion) {
