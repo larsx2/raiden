@@ -452,6 +452,14 @@ export function App(props: {
     virtualizer.scrollToIndex(headingAbove ? heading : slot);
   };
 
+  const browseTo = (row: number) => {
+    const before = selected();
+    select(row);
+    if (selected() !== before) {
+      browsing = true;
+    }
+  };
+
   const selectedKey = createMemo(() => keyAt(selected()));
   createEffect(on(selectedKey, forgetNote, { defer: true }));
 
@@ -459,8 +467,7 @@ export function App(props: {
     const count = results().length;
     if (count > 0) {
       handPicked = true;
-      browsing = true;
-      select(selected() + step);
+      browseTo(selected() + step);
     }
   };
 
@@ -470,7 +477,7 @@ export function App(props: {
     const at = `${event.screenX},${event.screenY}`;
     const moved = pointer !== undefined && pointer !== at;
     pointer = at;
-    if (moved && menu() === null && pressed() === null) {
+    if (moved && menu() === null && pressed() === null && !previewing) {
       handPicked = true;
       setSelected(row);
     }
@@ -907,6 +914,9 @@ export function App(props: {
   const lookAt = (path: string, follow: boolean) => {
     const asked = ++previewAsked;
     return inTurn(async () => {
+      if (follow && asked !== previewAsked) {
+        return;
+      }
       try {
         const shown = await props.call<boolean | null>("quick_look", { path, follow });
         if (asked === previewAsked) {
@@ -1273,8 +1283,7 @@ export function App(props: {
       }
       const rows = Math.max(1, Math.floor((list?.clientHeight ?? 0) / ROW_HEIGHT));
       handPicked = true;
-      browsing = true;
-      select(selected() + direction * rows);
+      browseTo(selected() + direction * rows);
     },
     move: (step: 1 | -1) => {
       if (menu()) {
@@ -1383,6 +1392,7 @@ export function App(props: {
       });
     },
     insert: (select: boolean, later?: boolean) => {
+      browsing = false;
       if (later) {
         setTimeout(() => document.hasFocus() && typeAgain(select), 0);
       } else {
@@ -1411,8 +1421,7 @@ export function App(props: {
         }
       } else if (results().length > 0) {
         handPicked = true;
-        browsing = true;
-        select(last ? results().length - 1 : 0);
+        browseTo(last ? results().length - 1 : 0);
       }
     },
     preview: () => togglePreview(previewable(selected())),
@@ -1663,6 +1672,7 @@ export function App(props: {
 
   const onPreview = (what: string) => {
     previewing = false;
+    previewAsked += 1;
     if (what === "hidden" && leaving !== undefined) {
       leaveNow();
     }

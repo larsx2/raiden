@@ -451,6 +451,22 @@ test("Normal mode stays Normal while Quick Look takes the keyboard and gives it 
   await expect(badge(page)).toHaveText("NORMAL");
 });
 
+test("after j moves the selection, a returns to typing and Space types a space", async ({
+  page,
+}) => {
+  await openSearch(page, "&vim=1");
+  await page.keyboard.type("note");
+  await toNormal(page);
+  await page.keyboard.press("j");
+  await page.keyboard.press("a");
+  await page.keyboard.type(" x");
+  await expect(page.locator("#q")).toHaveValue("note x");
+  const looked = await page.evaluate(
+    () => window.sent.filter((call) => call.command === "quick_look").length,
+  );
+  expect(looked).toBe(0);
+});
+
 const pressesToHide = async (page: Page) => {
   for (let presses = 1; presses <= 8; presses++) {
     await page.keyboard.press("Escape");

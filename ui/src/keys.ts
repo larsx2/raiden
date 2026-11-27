@@ -133,12 +133,15 @@ const noModifiers = (event: Keystroke) =>
   event.metaKey !== true && event.ctrlKey !== true && event.altKey !== true;
 
 function quickLook(event: Keystroke, view: PanelView, actions: PanelActions): boolean | undefined {
-  if (view.menu || inside(view)) {
+  if (inside(view)) {
     return undefined;
   }
   if (view.previewing === true && (event.key === "Escape" || vimEscape(event, view))) {
     actions.closePreview();
     return true;
+  }
+  if (view.menu) {
+    return undefined;
   }
   if (onlyMeta(event) && event.key.toLowerCase() === "y") {
     return event.repeat === true || actions.preview();

@@ -51,6 +51,9 @@ define_class!(
         fn end_control(&self, panel: Option<&QLPreviewPanel>) {
             if let Some(panel) = panel {
                 unsafe { panel.setDataSource(None) };
+                if !panel.isVisible() {
+                    tell("closed");
+                }
             }
         }
     }
@@ -159,8 +162,10 @@ fn watch_once(panel: &QLPreviewPanel) {
     let clicked = RcBlock::new(|_: NonNull<NSEvent>| {
         CLICKED_ELSEWHERE_AT.with(|at| at.set(Some(Instant::now())));
     });
-    let clicks =
-        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
+    let clicks = NSEventMask::LeftMouseDown
+        | NSEventMask::RightMouseDown
+        | NSEventMask::OtherMouseDown
+        | NSEventMask::KeyDown;
     std::mem::forget(NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
         clicks, &clicked,
     ));
@@ -219,7 +224,6 @@ pub fn look(app: &AppHandle, path: &str, follow: bool) -> bool {
     }
     let previewer = previewer(mtm);
     *previewer.ivars().url.borrow_mut() = Some(NSURL::fileURLWithPath(&NSString::from_str(path)));
-    let opening = open.is_none();
     let shown = match open {
         Some(panel) => {
             if unsafe { panel.dataSource() }.is_none() {
@@ -230,7 +234,7 @@ pub fn look(app: &AppHandle, path: &str, follow: bool) -> bool {
         }
         None => show(launcher.as_panel(), &previewer, mtm),
     };
-    if shown && opening {
+    if shown {
         LOADED_AT.with(|at| at.set(Some((Instant::now(), frontmost_app()))));
     }
     shown
@@ -258,7 +262,8 @@ pub fn keeps_raiden_up(launcher: &NSWindow) -> bool {
         || NSApplication::sharedApplication(mtm).keyWindow().is_some();
     let clicked_elsewhere = CLICKED_ELSEWHERE_AT.with(Cell::get);
     let loading = LOADED_AT.with(Cell::get).is_some_and(|(at, frontmost)| {
-        let clicked_since = clicked_elsewhere.is_some_and(|clicked| clicked >= at);
+        let clicked_since = clicked_elsewhere.is_some_and(|clicked| clicked >= at)
+            || NSEvent::pressedMouseButtons() != 0;
         just_loaded(at.elapsed(), frontmost, frontmost_app(), clicked_since)
     });
     stays_up(preview.is_some(), holding || loading)

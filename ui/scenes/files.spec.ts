@@ -331,6 +331,46 @@ test("open, close, open and ↓ typed fast still end on the file the selection i
   expect(opens).toHaveLength(2);
 });
 
+test("↑ on the first row moves nothing, so Space still types", async ({ page }) => {
+  await open(page);
+  await page.keyboard.type("release");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.type(" notes");
+  await expect(page.locator("#q")).toHaveValue("release notes");
+  expect(await sent(page, "quick_look")).toEqual([]);
+});
+
+test("moving the mouse over other rows leaves the preview on the file it shows", async ({
+  page,
+}) => {
+  await open(page);
+  await page.keyboard.type("notes");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Space");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  const other = page.locator(".row").nth(2);
+  const box = await other.boundingBox();
+  if (box) {
+    await page.mouse.move(box.x + 20, box.y + 10);
+    await page.mouse.move(box.x + 40, box.y + 12);
+  }
+  await page.waitForTimeout(200);
+  await expect(page.locator(".row.selected .title")).toHaveText("notes.md");
+  expect(await sent(page, "quick_look")).toHaveLength(1);
+});
+
+test("with the ⌘K menu open, Escape closes the preview before the menu", async ({ page }) => {
+  await open(page);
+  await page.keyboard.type("agents");
+  await page.keyboard.press("Meta+y");
+  await expect.poll(() => sent(page, "quick_look")).toHaveLength(1);
+  await page.keyboard.press("Meta+k");
+  await expect(page.locator(".act").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => sent(page, "close_quick_look")).toHaveLength(1);
+  await expect(page.locator(".act").first()).toBeVisible();
+});
+
 test("moving the caret after ↓ makes Space type a space again", async ({ page }) => {
   await open(page);
   await page.keyboard.type("releasenotes");
