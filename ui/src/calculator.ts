@@ -2,7 +2,7 @@ const TOKEN = /\s*(\d+\.?\d*|\.\d+|[-+*/×÷x%^()])\s*/y;
 const OPERATOR = /^[-+*/×÷x%^]$/;
 const LONGEST = 200;
 const DATE_OR_PHONE =
-  /^(\d{4}([-/])\d{1,2}\2\d{1,2}|\d{1,2}([-/])\d{1,2}\3\d{4}|\+?(\d{1,3}-)?\d{3}-\d{3}-\d{4}|\+?\d{3}-\d{4})$/;
+  /^(\d{4}([-/])\d{1,2}\2\d{1,2}|\d{1,2}([-/])\d{1,2}\3\d{4}|\d{1,2}\/\d{1,2}\/\d{2}|\+?(\d{1,3}-)?\d{3}-\d{3}-\d{4}|\+?\d{3}-\d{4}|\d{5}-\d{4})$/;
 const MOST_DIGITS = 30;
 const SHOWN = 15;
 const TINY = 10n ** BigInt(SHOWN);
@@ -107,7 +107,8 @@ const raise = (base: Value, power: Value): Value => {
   const x = Number(base.n) / Number(base.d);
   const y = Number(power.n) / Number(power.d);
   const result = x ** y;
-  if ((x < 0 && !Number.isSafeInteger(y)) || (result === 0 && x !== 0)) {
+  const wholeY = wholePower && Number.isSafeInteger(y);
+  if ((x < 0 && !wholeY) || (result === 0 && x !== 0)) {
     return fail();
   }
   const spread = x === 0 ? 0 : Math.abs(y) * (1 + Math.abs(Math.log(Math.abs(x))));
@@ -229,16 +230,23 @@ const shown = ({ n, d, digits }: Value): string | undefined => {
     return sign + full;
   }
   const whole = size / d;
-  let places = trusted - (whole === 0n ? 0 : whole.toString().length);
+  let places = SHOWN - (whole === 0n ? 0 : whole.toString().length);
   if (whole === 0n) {
     for (let scaled = size * 10n; scaled < d; scaled *= 10n) places++;
   }
-  if (places < 0) {
-    return undefined;
+  const slack = 10n ** BigInt(trusted);
+  const [low, high, under] = exact
+    ? [size, size, d]
+    : [size * (slack - 1n), size * (slack + 1n), d * slack];
+  const round = (top: bigint) => (top * 10n ** BigInt(places) * 2n + under) / (2n * under);
+  for (; places >= 0; places--) {
+    const scaled = round(low);
+    if (scaled === round(high)) {
+      const looksWhole = scaled % 10n ** BigInt(places) === 0n;
+      return exact && looksWhole ? undefined : sign + withPoint(scaled, places);
+    }
   }
-  const scale = 10n ** BigInt(places);
-  const text = withPoint((size * scale * 2n + d) / (2n * d), places);
-  return exact && !text.includes(".") ? undefined : sign + text;
+  return undefined;
 };
 
 export function calculate(text: string): string | undefined {
