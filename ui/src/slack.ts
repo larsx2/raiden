@@ -70,12 +70,15 @@ export function createSlack(options: { call: Call }) {
   const [notice, setNotice] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   let opened = 0;
+  let queried = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const shown = createMemo(() => hits());
   const at = () => Math.max(0, Math.min(selected(), shown().length - 1));
   const selectedHit = () => shown()[at()];
-  const gate = () => (hasToken() ? null : "token");
+  // Onboarding shows only once the first reply says there is no token, so a
+  // signed-in person never flashes the gate and early keystrokes are not lost.
+  const gate = () => (loaded() && !hasToken() ? "token" : null);
 
   const take = (view: SlackView, mine: number) => {
     if (mine !== opened) {
@@ -91,8 +94,10 @@ export function createSlack(options: { call: Call }) {
 
   const run = (text: string) => {
     const mine = opened;
+    const query = ++queried;
     call<SlackView>("slack_search", { query: text })
-      .then((view) => take(view, mine))
+      // Only the newest query wins, so a slow reply cannot replace newer hits.
+      .then((view) => query === queried && take(view, mine))
       .catch((error: unknown) => mine === opened && setNotice(problemOf(error)));
   };
 
@@ -105,6 +110,7 @@ export function createSlack(options: { call: Call }) {
       setSelected(0);
       setProblem(null);
       setNotice("");
+      setBusy(false);
     });
     run("");
     void mine;
@@ -119,6 +125,7 @@ export function createSlack(options: { call: Call }) {
       setHits([]);
       setQuery("");
       setNotice("");
+      setBusy(false);
     });
   };
 
@@ -158,9 +165,11 @@ export function createSlack(options: { call: Call }) {
         }
         take(view, mine);
         batch(() => {
-          setNotice(view.hasToken && !view.problem ? "" : notice());
           if (view.hasToken && !view.problem) {
+            setNotice("");
             setQuery("");
+          } else {
+            setNotice(view.problem?.text ?? "That token did not work.");
           }
         });
       })

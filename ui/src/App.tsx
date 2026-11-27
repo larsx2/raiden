@@ -222,6 +222,20 @@ export function App(props: {
   const clip = createClipboard({ call: props.call });
   const pulls = createPulls({ call: props.call });
   const slk = createSlack({ call: props.call });
+  // The token is typed into the shared search field; clear that field whenever
+  // onboarding opens or closes so a pasted token is never left to be sent as a
+  // search once the view becomes a search again.
+  createEffect(
+    on(
+      slk.gate,
+      (gate, was) => {
+        if (field && was !== gate) {
+          field.value = "";
+        }
+      },
+      { defer: true },
+    ),
+  );
   let returnTo = "";
   let pullsReturnTo = "";
   const pullsShown = () => pulls.open() && !answering();

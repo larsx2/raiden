@@ -121,5 +121,19 @@ test.describe("onboarding", () => {
     await expect(page.locator(".slack-gate")).toHaveCount(0);
     await expect(names(page).first()).toHaveText("Ana Lee");
     await expect(page.locator("#q")).toHaveAttribute("placeholder", "Search Slack");
+    // The field is cleared so the pasted token is never sent as a search.
+    await expect(page.locator("#q")).toHaveValue("");
+  });
+
+  test("a rejected token keeps onboarding open and shows why", async ({ page }) => {
+    await openSlack(page, "&slacktoken=0");
+    await page.keyboard.type("not-a-real-token");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".slack-gate")).toHaveCount(1);
+    await expect(page.locator(".slack-gate .ep")).toContainText("Slack rejected the token");
+    await expect(page.locator("#q")).toHaveAttribute(
+      "placeholder",
+      /Paste your Slack User OAuth Token/,
+    );
   });
 });
