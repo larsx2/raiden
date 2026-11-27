@@ -5,9 +5,9 @@ const DATE_OR_PHONE =
   /^(\d{4}([-/])\d{1,2}\2\d{1,2}|\d{1,2}([-/])\d{1,2}\3\d{4}|\d{1,2}\/\d{1,2}\/\d{2}|\+?(\d{1,3}-)?\d{3}-\d{3}-\d{4}|\+?\d{3}-\d{4}|\d{5}-\d{4})$/;
 const MOST_DIGITS = 30;
 const SHOWN = 15;
+const ROUGH_SHOWN = 12;
 const TINY = 10n ** BigInt(SHOWN);
 const MOST_BITS = 1024;
-const DOUBLE_DIGITS = 15;
 
 const tokensOf = (text: string): string[] | undefined => {
   const tokens: string[] = [];
@@ -22,7 +22,7 @@ const tokensOf = (text: string): string[] | undefined => {
   return tokens;
 };
 
-type Value = { n: bigint; d: bigint; digits: number };
+type Value = { n: bigint; d: bigint; rough: boolean };
 
 class NoAnswer extends Error {}
 
@@ -42,82 +42,52 @@ const gcd = (a: bigint, b: bigint): bigint => {
   return x;
 };
 
-const value = (n: bigint, d: bigint, digits = Infinity): Value => {
+const value = (n: bigint, d: bigint, rough = false): Value => {
   if (d === 0n) {
     return fail();
   }
   const sign = d < 0n ? -1n : 1n;
   const common = gcd(n, d) || 1n;
-  const made = { n: (sign * n) / common, d: (sign * d) / common, digits };
+  const made = { n: (sign * n) / common, d: (sign * d) / common, rough };
   return bits(made.n) > MOST_BITS || bits(made.d) > MOST_BITS ? fail() : made;
 };
 
 const ONE = value(1n, 1n);
 const HUNDRED = value(100n, 1n);
 
-const log10 = (whole: bigint) => {
-  const text = absolute(whole).toString();
-  return Math.log10(Number(text.slice(0, 17))) + Math.max(0, text.length - 17);
-};
-
-const magnitude = (of: Value) => log10(of.n) - log10(of.d);
-
-const multiply = (a: Value, b: Value) => value(a.n * b.n, a.d * b.d, Math.min(a.digits, b.digits));
-
-const divide = (a: Value, b: Value) => value(a.n * b.d, a.d * b.n, Math.min(a.digits, b.digits));
-
-const add = (a: Value, b: Value) => {
-  const total = value(a.n * b.d + b.n * a.d, a.d * b.d, Math.min(a.digits, b.digits));
-  if (total.digits === Infinity) {
-    return total;
-  }
-  if (total.n === 0n) {
-    return { ...total, digits: -Infinity };
-  }
-  const lost = Math.max(0, Math.max(magnitude(a), magnitude(b)) - magnitude(total));
-  return { ...total, digits: total.digits - lost };
-};
-
+const multiply = (a: Value, b: Value) => value(a.n * b.n, a.d * b.d, a.rough || b.rough);
+const divide = (a: Value, b: Value) => value(a.n * b.d, a.d * b.n, a.rough || b.rough);
+const add = (a: Value, b: Value) => value(a.n * b.d + b.n * a.d, a.d * b.d, a.rough || b.rough);
 const negate = (of: Value) => ({ ...of, n: -of.n });
 
-const decimal = (text: string, digits = Infinity): Value => {
+const decimal = (text: string, rough = false): Value => {
   const [whole = "", part = ""] = text.split(".");
-  return value(BigInt(`${whole}${part}` || "0"), 10n ** BigInt(part.length), digits);
+  return value(BigInt(`${whole}${part}` || "0"), 10n ** BigInt(part.length), rough);
 };
 
-const roughly = (number: number, digits: number): Value => {
-  if (!Number.isFinite(number)) {
-    return fail();
-  }
+const roughly = (number: number): Value => {
   const [, sign, mantissa, exponent = "0"] = /^(-?)([\d.]+)(?:e([+-]\d+))?$/.exec(String(number))!;
   const shift = value(10n ** BigInt(Math.abs(Number(exponent))), 1n);
-  const unsigned = decimal(mantissa!, digits);
+  const unsigned = decimal(mantissa!, true);
   const scaled = Number(exponent) < 0 ? divide(unsigned, shift) : multiply(unsigned, shift);
   return sign ? negate(scaled) : scaled;
 };
 
 const raise = (base: Value, power: Value): Value => {
   const times = absolute(power.n);
-  const wholePower = power.d === 1n && power.digits === Infinity;
-  if (wholePower && BigInt(bits(base.n) + bits(base.d)) * times <= BigInt(MOST_BITS)) {
-    const raised = value(
-      base.n ** times,
-      base.d ** times,
-      base.digits - Math.log10(Math.max(1, Number(times))),
-    );
+  if (power.d === 1n && BigInt(bits(base.n) + bits(base.d)) * times <= BigInt(MOST_BITS)) {
+    const raised = value(base.n ** times, base.d ** times, base.rough || power.rough);
     return power.n < 0n ? divide(ONE, raised) : raised;
   }
   const x = Number(base.n) / Number(base.d);
   const y = Number(power.n) / Number(power.d);
   const result = x ** y;
-  const wholeY = wholePower && Number.isSafeInteger(y);
   const lostBase = !Number.isFinite(x) || (x === 0 && base.n !== 0n);
-  if (lostBase || !Number.isFinite(y) || (x < 0 && !wholeY) || (result === 0 && x !== 0)) {
+  const lostResult = result === 0 && x !== 0;
+  if (!Number.isFinite(result) || lostBase || lostResult || (x < 0 && !Number.isSafeInteger(y))) {
     return fail();
   }
-  const spread = x === 0 ? 0 : Math.abs(y) * (1 + Math.abs(Math.log(Math.abs(x))));
-  const growth = Math.max(0, Math.log10(spread));
-  return roughly(result, Math.min(base.digits, power.digits, DOUBLE_DIGITS) - growth);
+  return roughly(result);
 };
 
 const evaluate = (tokens: string[]): Value => {
@@ -215,12 +185,7 @@ const inFull = (size: bigint, d: bigint): string | undefined => {
   return text.replace(".", "").replace(/^0+/, "").length <= MOST_DIGITS ? text : undefined;
 };
 
-const shown = ({ n, d, digits }: Value): string | undefined => {
-  const exact = digits === Infinity;
-  const trusted = Math.min(SHOWN, Math.floor(digits));
-  if (!(trusted >= 1)) {
-    return undefined;
-  }
+const shown = ({ n, d, rough }: Value): string | undefined => {
   if (n === 0n) {
     return "0";
   }
@@ -229,28 +194,21 @@ const shown = ({ n, d, digits }: Value): string | undefined => {
     return undefined;
   }
   const sign = n < 0n ? "-" : "";
-  const full = exact ? inFull(size, d) : undefined;
+  const full = rough ? undefined : inFull(size, d);
   if (full !== undefined) {
     return sign + full;
   }
   const whole = size / d;
-  let places = SHOWN - (whole === 0n ? 0 : whole.toString().length);
+  let places = (rough ? ROUGH_SHOWN : SHOWN) - (whole === 0n ? 0 : whole.toString().length);
   if (whole === 0n) {
     for (let scaled = size * 10n; scaled < d; scaled *= 10n) places++;
   }
-  const slack = 10n ** BigInt(trusted);
-  const [low, high, under] = exact
-    ? [size, size, d]
-    : [size * (slack - 1n), size * (slack + 1n), d * slack];
-  const round = (top: bigint) => (top * 10n ** BigInt(places) * 2n + under) / (2n * under);
-  for (; places >= 0; places--) {
-    const scaled = round(low);
-    if (scaled === round(high)) {
-      const looksWhole = scaled % 10n ** BigInt(places) === 0n;
-      return exact && looksWhole ? undefined : sign + withPoint(scaled, places);
-    }
+  if (places < 0) {
+    return undefined;
   }
-  return undefined;
+  const scaled = (size * 10n ** BigInt(places) * 2n + d) / (2n * d);
+  const looksWhole = scaled % 10n ** BigInt(places) === 0n;
+  return !rough && looksWhole ? undefined : sign + withPoint(scaled, places);
 };
 
 export function calculate(text: string): string | undefined {
