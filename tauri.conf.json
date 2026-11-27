@@ -48,7 +48,8 @@
       "app"
     ],
     "icon": [
-      "icons/icon.png"
+      "icons/icon.png",
+      "icons/icon@2x.png"
     ],
     "macOS": {
       "signingIdentity": "Raiden Local",
