@@ -85,9 +85,10 @@ Leave out the scope for changes to the whole repository.
 - Fill in the template: what changed and why, how you tested it, and the AI tool you used.
 - Include a screenshot or a short recording for anything you can see.
 - CI runs lint and tests on macOS, and must pass.
-- Someone other than the author approves before merging. Every review comment gets resolved, and a
-  push after approval needs a new approval. The project's owner may merge their own pull requests
-  once the build passes.
+- The project's owner, larsx2, approves every pull request from someone else before it merges, as
+  [CODEOWNERS](.github/CODEOWNERS) and the rules on `main` require. Every review comment gets
+  resolved, and a push after approval needs a new approval. The owner may merge their own pull
+  requests once the build passes.
 
 ## Security
 
