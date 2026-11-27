@@ -426,6 +426,17 @@ impl Files {
         }
     }
 
+    pub fn remember_paths<'a>(&self, shown: impl Iterator<Item = &'a str>) {
+        let mut paths = self.shown.lock().unwrap_or_else(PoisonError::into_inner);
+        for path in shown {
+            paths.retain(|known| known != path);
+            paths.push_back(path.to_owned());
+        }
+        while paths.len() > REMEMBERED {
+            paths.pop_front();
+        }
+    }
+
     pub fn showed(&self, path: &str) -> bool {
         self.shown
             .lock()

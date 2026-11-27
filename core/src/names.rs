@@ -63,6 +63,8 @@ pub struct Names {
     names: Vec<u8>,
     folded: Vec<u8>,
     dead: usize,
+    added: Vec<String>,
+    removed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -539,6 +541,9 @@ impl Names {
             .collect();
         let changed = !gone.is_empty() || !added.is_empty();
         for child in gone {
+            if self.kind(child) == Kind::Folder {
+                self.removed.push(self.path(child));
+            }
             self.kill_below(child);
         }
         self.first_child[folder as usize] = NONE;
@@ -546,8 +551,74 @@ impl Names {
             self.next_sibling[child as usize] = self.first_child[folder as usize];
             self.first_child[folder as usize] = child;
         }
+        let first_new = offset(self.parent.len());
         self.graft(folder, added);
+        let new_folders: Vec<String> = self
+            .children(folder)
+            .filter(|child| *child >= first_new && self.kind(*child) == Kind::Folder)
+            .map(|child| self.path(child))
+            .collect();
+        self.added.extend(new_folders);
         changed
+    }
+
+    pub fn take_added(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.added)
+    }
+
+    pub fn take_removed(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.removed)
+    }
+
+    fn exact(&self, folder: &Path) -> Option<u32> {
+        let id = self.locate(folder);
+        (id != NONE && Path::new(&self.path(id)) == folder).then_some(id)
+    }
+
+    pub fn files_in(&self, folder: &Path) -> Vec<String> {
+        let Some(id) = self.exact(folder).filter(|id| self.opens(*id)) else {
+            return Vec::new();
+        };
+        self.children(id)
+            .filter(|child| self.kind(*child) == Kind::File)
+            .map(|child| self.path(child))
+            .collect()
+    }
+
+    pub fn files_under(&self, folder: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut waiting: Vec<u32> = self.exact(folder).into_iter().collect();
+        while let Some(at) = waiting.pop() {
+            if !self.opens(at) {
+                continue;
+            }
+            for child in self.children(at) {
+                match self.kind(child) {
+                    Kind::File => found.push(self.path(child)),
+                    Kind::Folder | Kind::Root => waiting.push(child),
+                    Kind::Other => {}
+                }
+            }
+        }
+        found
+    }
+
+    pub fn files(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut waiting = vec![0];
+        while let Some(at) = waiting.pop() {
+            if !self.opens(at) || self.blocked_at(at) {
+                continue;
+            }
+            for child in self.children(at) {
+                match self.kind(child) {
+                    Kind::File => found.push(self.path(child)),
+                    Kind::Folder | Kind::Root => waiting.push(child),
+                    Kind::Other => {}
+                }
+            }
+        }
+        found
     }
 
     pub fn block(&mut self, path: &Path) {
@@ -657,6 +728,8 @@ impl Names {
         let mut fresh = Self {
             home: self.home.clone(),
             device: self.device,
+            added: self.added.clone(),
+            removed: self.removed.clone(),
             ..Self::default()
         };
         let (order, renumbered) = self.live_in_order();
@@ -1588,5 +1661,52 @@ mod tests {
                 started.elapsed()
             );
         }
+    }
+
+    #[test]
+    fn content_search_can_ask_for_a_folders_files_and_newly_added_folders() {
+        let home = Home::new("for-contents");
+        home.file("Code/a.rs");
+        home.file("Code/web/node_modules/x/index.js");
+        let mut names = Names::build(home.path());
+        home.file("Code/moved/src/b.rs");
+        names.refresh(&home.0.join("Code"), None);
+        let code = home.0.join("Code");
+        assert_eq!(
+            names.files_in(&code),
+            [format!("{}/Code/a.rs", home.path())]
+        );
+        let mut under = names.files_under(&code);
+        under.sort();
+        assert_eq!(
+            under,
+            [
+                format!("{}/Code/a.rs", home.path()),
+                format!("{}/Code/moved/src/b.rs", home.path()),
+            ]
+        );
+        assert_eq!(names.take_added(), [format!("{}/Code/moved", home.path())]);
+        assert!(names.take_added().is_empty());
+        assert!(
+            names
+                .files_in(&home.0.join("Code/web/node_modules"))
+                .is_empty()
+        );
+        fs::remove_dir_all(home.0.join("Code/moved")).unwrap();
+        names.refresh(&code, None);
+        assert_eq!(
+            names.take_removed(),
+            [format!("{}/Code/moved", home.path())]
+        );
+    }
+
+    #[test]
+    fn the_file_list_for_content_search_skips_blocked_folders() {
+        let home = Home::new("files-blocked");
+        home.file("Documents/a.txt");
+        home.file("Code/b.rs");
+        let mut names = Names::build(home.path());
+        names.block(&home.0.join("Documents"));
+        assert_eq!(names.files(), [format!("{}/Code/b.rs", home.path())]);
     }
 }

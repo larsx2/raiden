@@ -3,6 +3,8 @@ pub mod answers;
 pub mod apps;
 #[cfg(unix)]
 pub mod clipboard;
+#[cfg(unix)]
+pub mod contents;
 pub mod control;
 pub mod crashes;
 pub mod files;

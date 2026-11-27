@@ -3,6 +3,7 @@ mod actions;
 mod ai;
 mod answers;
 mod clipboard;
+mod contents;
 mod control;
 mod crashes;
 mod files;
@@ -397,6 +398,10 @@ fn launch(rows: Option<usize>, development: bool) {
         return;
     }
     crashes::watch(development);
+    let home = std::env::var("HOME").unwrap_or_default();
+    let names = std::sync::Arc::new(names::Index::default());
+    let contents = contents::start(&names, &home, &folders(development).1);
+    names::begin(&names, &home, &folders(development).1);
     tauri::Builder::default()
         .manage(SpeedLog::new(development))
         .manage(HiddenSince(Mutex::new(Instant::now())))
@@ -407,10 +412,8 @@ fn launch(rows: Option<usize>, development: bool) {
         .manage(hud::Hud::default())
         .manage(answers::Answers::new(&folders(development).1))
         .manage(clipboard::History::new(&folders(development).1))
-        .manage(files::Files::start(names::start(
-            &std::env::var("HOME").unwrap_or_default(),
-            &folders(development).1,
-        )))
+        .manage(files::Files::start(std::sync::Arc::clone(&names)))
+        .manage(std::sync::Arc::clone(&contents))
         .manage(pulls::Pulls::new(&folders(development).1))
         .manage(sizes::Sizes::new(&folders(development).1))
         .on_web_content_process_terminate(crashes::reload)
@@ -440,6 +443,7 @@ fn launch(rows: Option<usize>, development: bool) {
             icon,
             picks::open,
             files::files,
+            contents::contents,
             actions::open_file,
             actions::copy_path,
             actions::show_in_finder,
@@ -499,6 +503,7 @@ fn launch(rows: Option<usize>, development: bool) {
             place(app.handle());
             settings::start(app.handle(), development);
             typeahead::watch();
+            contents.attach(app.handle().clone());
             clipboard::watch(&app.state::<clipboard::History>());
             Ok(())
         })

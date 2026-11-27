@@ -11,6 +11,7 @@ export type Fixture =
   | "settings"
   | "clipboard"
   | "files"
+  | "contents"
   | "pulls";
 
 export type SentCall = { command: string; args?: Record<string, unknown> };
@@ -22,6 +23,9 @@ declare global {
     finishSignIn?: () => void;
     finishFront?: () => void;
     finishFiles?: (query?: string) => void;
+    finishContents?: (query?: string) => void;
+    finishBuilding?: () => void;
+    contentsReady?: () => void;
     finishRefresh?: () => void;
     signInToGh?: () => void;
     pressHotkey?: (keys: string) => void;
@@ -89,6 +93,29 @@ export const FIXTURE_FILES: Array<[path: string, icon: string]> = [
   ["/Users/me/Documents/Release notes.txt", "file-txt"],
   ["/Users/me/Documents/Meeting notes", "file-folder"],
   ["/Users/me/Code/lantern/AGENTS.md", "file-md"],
+];
+
+export const FIXTURE_CONTENTS: Array<[path: string, icon: string, lines: string[]]> = [
+  [
+    "/Users/me/Documents/notes.md",
+    "file-md",
+    ["# Planning", "", "The quarterly plan is due Friday.", "Ask Dana about the budget."],
+  ],
+  [
+    "/Users/me/Code/lantern/src/main.rs",
+    "file-txt",
+    ["use lantern::run;", "", "fn main() {", "    run();", "}"],
+  ],
+  [
+    "/Users/me/Code/lantern/ui/src/search.ts",
+    "file-txt",
+    ["export function rank(text: string) {", "  // TODO: rank recent files first", "}"],
+  ],
+  [
+    "/Users/me/Documents/Release notes.txt",
+    "file-txt",
+    ["Raiden 0.4", "The quarterly release moves to Monday."],
+  ],
 ];
 
 export const FIXTURE_TERMINALS: Array<[id: TerminalId, name: string, app: string | null]> = [
