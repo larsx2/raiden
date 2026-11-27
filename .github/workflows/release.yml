@@ -1,0 +1,290 @@
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-check:
+    if: (github.event_name == 'push' && github.ref_type == 'tag') || github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the tag is on main and matches the version
+        if: github.ref_type == 'tag'
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::The tag $GITHUB_REF_NAME is not on main."
+            exit 1
+          fi
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME, but Cargo.toml says $version."
+            exit 1
+          fi
+
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5
+        with:
+          cache: false
+
+      - name: Check Cargo.lock matches Cargo.toml
+        run: |
+          if ! mise x -- cargo metadata --locked --format-version 1 > /dev/null; then
+            echo "::error::Cargo.lock is out of date. Run mise x -- cargo check and commit it."
+            exit 1
+          fi
+
+      - run: mise run lint
+      - run: mise run test
+
+  build:
+    needs: release-check
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5
+        with:
+          cache: false
+
+      - run: mise run setup
+      - run: mise x -- sh scripts/release.sh build
+      - run: ditto -c -k --keepParent target/release/bundle/macos/Raiden.app "$RUNNER_TEMP/Raiden.zip"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned
+          overwrite: true
+          path: ${{ runner.temp }}/Raiden.zip
+          retention-days: 7
+
+  sign:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 150
+    environment: release
+    permissions:
+      contents: write
+    outputs:
+      draft: ${{ steps.publish.outputs.draft }}
+      release: ${{ steps.verify.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check no release exists for the tag yet
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if answer="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1)"; then
+            echo "::error::$GITHUB_REF_NAME already has a published release, so this run signs nothing."
+            exit 1
+          fi
+          if ! printf '%s' "$answer" | grep -q "HTTP 404"; then
+            echo "::error::GitHub could not say whether $GITHUB_REF_NAME has a release: $answer"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned
+          path: ${{ runner.temp }}
+
+      - name: Unpack the unsigned app
+        run: |
+          mkdir -p target/release/bundle/macos
+          ditto -x -k "$RUNNER_TEMP/Raiden.zip" target/release/bundle/macos
+
+      - name: Load the signing certificate and the notary key
+        env:
+          DEVELOPER_ID_CERTIFICATE: ${{ secrets.DEVELOPER_ID_CERTIFICATE }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          for secret in DEVELOPER_ID_CERTIFICATE DEVELOPER_ID_CERTIFICATE_PASSWORD NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER; do
+            if [ -z "$(printenv "$secret")" ]; then
+              echo "::error::The release environment has no $secret secret. CONTRIBUTING.md says what it holds."
+              exit 1
+            fi
+          done
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          password="$(openssl rand -hex 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $RUNNER_TEMP/DeveloperIDG2CA.cer" | shasum -a 256 -c
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain"
+          (umask 077 && printf '%s' "$DEVELOPER_ID_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12")
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$DEVELOPER_ID_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain
+          (umask 077 && printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8")
+
+      - name: Sign and notarize
+        env:
+          NOTARY_KEY_PATH: ${{ runner.temp }}/notary.p8
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: sh scripts/release.sh sign
+
+      - name: Remove the signing keychain and the notary key
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/notary.p8"
+
+      - name: Keep the download
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: raiden
+          overwrite: true
+          path: target/dist/
+          retention-days: 7
+
+      - name: Publish the release
+        id: publish
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          releases="repos/$GITHUB_REPOSITORY/releases"
+          sh scripts/release-notes.sh "$tag" > "$RUNNER_TEMP/notes.md"
+          gh api "$releases" --paginate --jq ".[] | select(.draft and .tag_name == \"$tag\") | .id" |
+            while read -r old; do
+              gh api -X DELETE "$releases/$old"
+            done
+          prerelease=false
+          case "$tag" in
+            *-*) prerelease=true ;;
+          esac
+          id="$(gh api -X POST "$releases" -f tag_name="$tag" -f name="Raiden ${tag#v}" \
+            -F draft=true -F prerelease="$prerelease" -F body=@"$RUNNER_TEMP/notes.md" --jq .id)"
+          echo "draft=$id" >> "$GITHUB_OUTPUT"
+          : > "$RUNNER_TEMP/expected"
+          for file in target/dist/*.dmg target/dist/*.sha256; do
+            name="$(basename "$file")"
+            gh api -X POST "https://uploads.github.com/$releases/$id/assets?name=$name" \
+              -H "Content-Type: application/octet-stream" --input "$file" > /dev/null
+            echo "$name sha256:$(shasum -a 256 "$file" | cut -d ' ' -f 1) " >> "$RUNNER_TEMP/expected"
+          done
+          LC_ALL=C sort "$RUNNER_TEMP/expected" | paste -sd ',' - > "$RUNNER_TEMP/expected-list"
+          held="$(gh api "$releases/$id/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")')"
+          if [ "$held" != "$(cat "$RUNNER_TEMP/expected-list")" ]; then
+            echo "::error::The draft does not hold exactly the files this run made, so it stays unpublished."
+            exit 1
+          fi
+          gh api -X PATCH "$releases/$id" -f tag_name="$tag" -F prerelease="$prerelease" -F draft=false > /dev/null
+
+      - name: Check the published release is exactly this run's
+        id: verify
+        if: always() && steps.publish.outputs.draft != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MINE: ${{ steps.publish.outputs.draft }}
+        run: |
+          releases="repos/$GITHUB_REPOSITORY/releases"
+          expected="$(for file in target/dist/*.dmg target/dist/*.sha256; do
+            echo "$(basename "$file") sha256:$(shasum -a 256 "$file" | cut -d ' ' -f 1) "
+          done | LC_ALL=C sort | paste -sd ',' -)"
+          answer="$(gh api "$releases/tags/$GITHUB_REF_NAME" --jq '"\(.id) \(.author.login) \(.immutable)"')"
+          held="$(gh api "$releases/$MINE/assets" --jq '[.[] | "\(.name) \(.digest) \(.label // "")"] | sort | join(",")')"
+          if [ "$answer" != "$MINE github-actions[bot] true" ] || [ -z "$held" ] || [ "$held" != "$expected" ]; then
+            gh api -X DELETE "$releases/$MINE" > /dev/null 2>&1 || true
+            echo "::error::$GITHUB_REF_NAME's release is not exactly the locked one this run made ($answer), so it is deleted."
+            exit 1
+          fi
+          echo "release=$MINE" >> "$GITHUB_OUTPUT"
+
+  guard:
+    needs: [release-check, build, sign]
+    if: always() && github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Keep only the release this workflow made
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT: ${{ needs.sign.outputs.draft }}
+          OWN: ${{ needs.sign.outputs.release }}
+          SIGNED: ${{ needs.sign.result }}
+        run: |
+          releases="repos/$GITHUB_REPOSITORY/releases"
+          tag="$GITHUB_REF_NAME"
+          if [ -n "$DRAFT" ] && [ "$DRAFT" != "$OWN" ] && [ "$SIGNED" != success ]; then
+            gh api -X DELETE "$releases/$DRAFT" > /dev/null 2>&1 || true
+          fi
+          if ! answer="$(gh api "$releases/tags/$tag" --jq '"\(.id) \(.immutable)"' 2>&1)"; then
+            if ! printf '%s' "$answer" | grep -q "HTTP 404"; then
+              echo "::error::GitHub could not say what $tag's release is: $answer"
+              exit 1
+            fi
+            if [ -n "$OWN" ]; then
+              echo "::error::$tag's release was published, then removed by someone else."
+              exit 1
+            fi
+            exit 0
+          fi
+          read -r id locked <<< "$answer"
+          if [ "$id" = "$OWN" ] && [ "$locked" = true ]; then
+            exit 0
+          fi
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::$tag has a release this run did not check ($answer). A re-run deletes nothing, so check who published it."
+            exit 1
+          fi
+          if [ -z "$OWN" ] && [ "$SIGNED" = success ]; then
+            echo "::error::The signing job passed but its release id was lost, so $tag's release ($answer) is kept. Check it by hand."
+            exit 1
+          fi
+          gh api -X DELETE "$releases/$id" > /dev/null
+          echo "::error::$tag had a release this workflow did not make and check ($answer), so it is deleted."
+          exit 1
+
+  provenance:
+    needs: [sign, guard]
+    if: github.ref_type == 'tag' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: raiden
+          path: dist
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.dmg

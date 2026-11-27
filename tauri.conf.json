@@ -53,6 +53,7 @@
     ],
     "macOS": {
       "signingIdentity": "Raiden Local",
+      "minimumSystemVersion": "13.0",
       "files": {
         "Library/LaunchAgents/com.larsx2.raiden.plist": "launch-agent.plist"
       }

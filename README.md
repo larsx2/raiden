@@ -206,6 +206,7 @@ mise run dev     # run Raiden from source with live reload of the screens
 mise run test    # unit tests, and the screens' behavior in WebKit
 mise run lint    # lint, format check and type check
 mise run fmt     # format everything
+mise run release # a signed, notarized download (see CONTRIBUTING.md)
 ```
 
 `mise run dev` runs a separate development copy that opens with <kbd>⌥⇧Space</kbd> (Clipboard history
