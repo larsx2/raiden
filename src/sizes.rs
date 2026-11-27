@@ -124,18 +124,16 @@ fn place(app: &AppHandle, frame: Area, animated: bool) {
     }
     let visible = ns_window.isVisible();
     let reduce_motion = NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
-    let seconds = window::resize_seconds(animated && visible, reduce_motion);
-    if seconds == 0.0 {
-        ns_window.setFrame_display(rect, visible);
-        return;
-    }
+    let seconds = window::resize_seconds(animated, visible, reduce_motion);
     NSAnimationContext::beginGrouping();
     let context = NSAnimationContext::currentContext();
     context.setDuration(seconds);
-    context.setTimingFunction(Some(&CAMediaTimingFunction::functionWithControlPoints(
-        0.32, 0.72, 0.0, 1.0,
-    )));
-    ns_window.animator().setFrame_display(rect, true);
+    if seconds > 0.0 {
+        context.setTimingFunction(Some(&CAMediaTimingFunction::functionWithControlPoints(
+            0.32, 0.72, 0.0, 1.0,
+        )));
+    }
+    ns_window.animator().setFrame_display(rect, visible);
     NSAnimationContext::endGrouping();
 }
 

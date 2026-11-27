@@ -31,12 +31,13 @@ pub fn size_text(expanded: bool) -> &'static str {
 
 /// ```
 /// use raiden_core::window::{resize_seconds, RESIZE_SECONDS};
-/// assert_eq!(resize_seconds(true, false), RESIZE_SECONDS);
-/// assert_eq!(resize_seconds(false, false), 0.0);
-/// assert_eq!(resize_seconds(true, true), 0.0);
+/// assert_eq!(resize_seconds(true, true, false), RESIZE_SECONDS);
+/// assert_eq!(resize_seconds(false, true, false), 0.0);
+/// assert_eq!(resize_seconds(true, false, false), 0.0);
+/// assert_eq!(resize_seconds(true, true, true), 0.0);
 /// ```
-pub fn resize_seconds(visible: bool, reduce_motion: bool) -> f64 {
-    if visible && !reduce_motion {
+pub fn resize_seconds(animated: bool, visible: bool, reduce_motion: bool) -> f64 {
+    if animated && visible && !reduce_motion {
         RESIZE_SECONDS
     } else {
         0.0
