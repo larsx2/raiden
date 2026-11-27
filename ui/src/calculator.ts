@@ -1,6 +1,7 @@
 const TOKEN = /\s*(\d+\.?\d*|\.\d+|[-+*/×÷x%^()])\s*/y;
 const OPERATOR = /^[-+*/×÷x%^]$/;
 const LONGEST = 200;
+const DATE_OR_PHONE = /^(\d{4}-\d{1,2}-\d{1,2}|\d{3}-\d{3,4}(-\d{4})?)$/;
 
 const tokensOf = (text: string): string[] | undefined => {
   const tokens: string[] = [];
@@ -56,7 +57,13 @@ const evaluate = (tokens: string[]): number => {
       return take() === "-" ? -unary() : unary();
     }
     const base = percent();
-    return peek() === "^" ? (take(), base ** unary()) : base;
+    if (peek() !== "^") {
+      return base;
+    }
+    take();
+    const raised = base ** unary();
+    percentage = false;
+    return raised;
   };
 
   const percent = (): number => {
@@ -73,6 +80,7 @@ const evaluate = (tokens: string[]): number => {
     const token = take();
     if (token === "(") {
       const value = sum();
+      percentage = false;
       return take() === ")" ? value : NaN;
     }
     return token !== undefined && /^[\d.]/.test(token) ? Number(token) : NaN;
@@ -83,7 +91,7 @@ const evaluate = (tokens: string[]): number => {
 };
 
 export function calculate(text: string): string | undefined {
-  if (text.length > LONGEST || /0x/i.test(text) || /^\d+([-/.]\d+)+$/.test(text.trim())) {
+  if (text.length > LONGEST || /0x/i.test(text) || DATE_OR_PHONE.test(text.trim())) {
     return undefined;
   }
   const tokens = tokensOf(text);
@@ -97,5 +105,5 @@ export function calculate(text: string): string | undefined {
   if (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) {
     return undefined;
   }
-  return String(Number(value.toPrecision(15)));
+  return (value + 0).toLocaleString("en-US", { maximumSignificantDigits: 15, useGrouping: false });
 }
