@@ -6,6 +6,8 @@ pub const OLD_FILE: &str = "expanded-views";
 
 pub const EXPANDED: (f64, f64) = (900.0, 660.0);
 
+pub const RESIZE_SECONDS: f64 = 0.22;
+
 const OLD_VIEWS: [&str; 4] = ["ai", "pulls", "clipboard", "settings"];
 
 /// ```
@@ -25,6 +27,20 @@ pub fn expanded_in(text: &str) -> bool {
 /// ```
 pub fn size_text(expanded: bool) -> &'static str {
     if expanded { "expanded\n" } else { "compact\n" }
+}
+
+/// ```
+/// use raiden_core::window::{resize_seconds, RESIZE_SECONDS};
+/// assert_eq!(resize_seconds(true, false), RESIZE_SECONDS);
+/// assert_eq!(resize_seconds(false, false), 0.0);
+/// assert_eq!(resize_seconds(true, true), 0.0);
+/// ```
+pub fn resize_seconds(visible: bool, reduce_motion: bool) -> f64 {
+    if visible && !reduce_motion {
+        RESIZE_SECONDS
+    } else {
+        0.0
+    }
 }
 
 /// ```

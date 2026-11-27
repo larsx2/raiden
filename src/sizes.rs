@@ -2,8 +2,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSScreen, NSWindow};
+use objc2_app_kit::{
+    NSAnimatablePropertyContainer, NSAnimationContext, NSScreen, NSWindow, NSWorkspace,
+};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
+use objc2_quartz_core::CAMediaTimingFunction;
 use raiden_core::Area;
 use raiden_core::window::{self, EXPANDED};
 use tauri::{AppHandle, Manager, Monitor, State};
@@ -92,6 +95,10 @@ pub fn frame_on(app: &AppHandle, monitor: &Monitor) -> Area {
 }
 
 pub fn apply(app: &AppHandle, frame: Area) {
+    place(app, frame, false);
+}
+
+fn place(app: &AppHandle, frame: Area, animated: bool) {
     let Some(main_thread) = MainThreadMarker::new() else {
         return;
     };
@@ -112,9 +119,24 @@ pub fn apply(app: &AppHandle, frame: Area) {
         NSPoint::new(cocoa.x, cocoa.y),
         NSSize::new(cocoa.width, cocoa.height),
     );
-    if ns_window.frame() != rect {
-        ns_window.setFrame_display(rect, ns_window.isVisible());
+    if ns_window.frame() == rect {
+        return;
     }
+    let visible = ns_window.isVisible();
+    let reduce_motion = NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
+    let seconds = window::resize_seconds(animated && visible, reduce_motion);
+    if seconds == 0.0 {
+        ns_window.setFrame_display(rect, visible);
+        return;
+    }
+    NSAnimationContext::beginGrouping();
+    let context = NSAnimationContext::currentContext();
+    context.setDuration(seconds);
+    context.setTimingFunction(Some(&CAMediaTimingFunction::functionWithControlPoints(
+        0.32, 0.72, 0.0, 1.0,
+    )));
+    ns_window.animator().setFrame_display(rect, true);
+    NSAnimationContext::endGrouping();
 }
 
 fn fit_chosen(app: &AppHandle) {
@@ -123,7 +145,7 @@ fn fit_chosen(app: &AppHandle) {
             .get_webview_window(crate::PANEL)
             .and_then(|window| window.current_monitor().ok().flatten());
         if let Some(monitor) = monitor {
-            apply(app, frame_on(app, &monitor));
+            place(app, frame_on(app, &monitor), true);
         }
     });
 }
