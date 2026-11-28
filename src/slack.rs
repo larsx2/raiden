@@ -178,7 +178,9 @@ pub async fn slack_open(app: AppHandle, url: String) -> Result<(), String> {
         // query that fooled the string check cannot reach a non-Slack site.
         let opened = NSURL::URLWithString(&NSString::from_str(&link))
             .filter(|parsed| is_slack_url(parsed))
-            .is_some_and(|parsed| NSWorkspace::sharedWorkspace().openURL(&parsed));
+            .is_some_and(|parsed| {
+                in_slack_app(&link) || NSWorkspace::sharedWorkspace().openURL(&parsed)
+            });
         let _ = sender.send(opened);
     })
     .map_err(|error| error.to_string())?;
@@ -188,6 +190,19 @@ pub async fn slack_open(app: AppHandle, url: String) -> Result<(), String> {
         Err(format!("macOS did not open {url}."))
     }
 }
+
+// A message's permalink is a web link, which would open in the browser and only then hand over
+// to Slack; giving it to the Slack app itself opens the message there. The link is passed as one
+// argument, never through a shell.
+fn in_slack_app(link: &str) -> bool {
+    link.starts_with("https://")
+        && std::process::Command::new("/usr/bin/open")
+            .args(["-b", SLACK_APP_ID, link])
+            .status()
+            .is_ok_and(|status| status.success())
+}
+
+const SLACK_APP_ID: &str = "com.tinyspeck.slackmacgap";
 
 fn save_token(inner: &Inner, token: &str) -> SlackView {
     if !valid_token(token) {
@@ -280,7 +295,11 @@ fn search(inner: &Inner, query: &str) -> SlackView {
             Err(trouble) => problem = Some(trouble),
         }
     }
-    let mut hits = slack::rank(hits);
+    let mut hits = if needle.is_empty() {
+        slack::latest_first(hits)
+    } else {
+        slack::rank(hits, query)
+    };
     hits.truncate(MOST);
     SlackView {
         has_token: true,
@@ -338,6 +357,15 @@ fn fetch_catalog(token: &str) -> Result<Catalog, Problem> {
         "channels",
     )?;
     let conversations = slack::conversations(&json!({ "channels": channels }), &team, &names);
+    // ponytail: recency is when you last wrote somewhere, from your 100 latest messages; a DM you
+    // only received, or one older than those, sorts by unread state alone. A failed lookup
+    // costs only the order.
+    let latest = get(token, &latest_url())
+        .ok()
+        .filter(|found| slack::check(found, now()).is_ok())
+        .map(|found| slack::last_written(&found))
+        .unwrap_or_default();
+    let conversations = slack::with_recency(conversations, &latest);
 
     Ok(Catalog {
         fetched: now(),
@@ -407,6 +435,14 @@ fn collect(token: &str, endpoint: &str, params: &str, key: &str) -> Result<Vec<V
         }
     }
     Ok(items)
+}
+
+fn latest_url() -> String {
+    format!(
+        "{}/search.messages?count=100&sort=timestamp&query={}",
+        slack::API,
+        encode("from:me")
+    )
 }
 
 fn messages_url(query: &str) -> String {

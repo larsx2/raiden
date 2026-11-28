@@ -344,13 +344,78 @@ fn first_nonempty<'a>(options: impl IntoIterator<Item = &'a String>) -> String {
         .unwrap_or_default()
 }
 
-/// Orders hits with unreads first, then direct mentions, then recency.
+/// Orders a typed search: a name that is the query, then one that starts with
+/// it, then any other name match, all before messages; then unreads, direct
+/// mentions and recency.
 ///
-/// Within equal priority the earlier arrival is kept, so a stable upstream
-/// order (name match quality, say) survives the sort.
-pub fn rank(mut hits: Vec<Hit>) -> Vec<Hit> {
+/// Within equal priority the earlier arrival is kept.
+pub fn rank(mut hits: Vec<Hit>, query: &str) -> Vec<Hit> {
+    let needle = query.trim().trim_start_matches('#').to_lowercase();
+    let name_fit = |h: &Hit| {
+        if h.kind == Kind::Message || needle.is_empty() {
+            return 0;
+        }
+        let name = h.title.trim_start_matches('#').to_lowercase();
+        if name == needle {
+            3
+        } else if name.starts_with(&needle) {
+            2
+        } else {
+            1
+        }
+    };
+    hits.sort_by_cached_key(|h| {
+        std::cmp::Reverse((
+            name_fit(h),
+            h.kind != Kind::Message,
+            h.unread > 0,
+            h.mention,
+            h.unread,
+            h.updated,
+        ))
+    });
+    hits
+}
+
+/// When you last wrote in each conversation, by conversation id, from a
+/// `search.messages` reply for `from:me`. `conversations.list` carries no
+/// latest message, so this is where recency comes from.
+pub fn last_written(value: &Value) -> std::collections::HashMap<String, u64> {
+    let mut latest = std::collections::HashMap::new();
+    for m in value
+        .pointer("/messages/matches")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let id = text(m, "/channel/id");
+        if id.is_empty() {
+            continue;
+        }
+        let at = seconds(&text(m, "/ts"));
+        let kept = latest.entry(id).or_insert(0);
+        *kept = (*kept).max(at);
+    }
+    latest
+}
+
+/// Copies those times onto the conversations they belong to.
+pub fn with_recency(
+    mut hits: Vec<Hit>,
+    latest: &std::collections::HashMap<String, u64>,
+) -> Vec<Hit> {
+    for hit in &mut hits {
+        if let Some(&at) = latest.get(&hit.id) {
+            hit.updated = hit.updated.max(at);
+        }
+    }
+    hits
+}
+
+/// The order with nothing typed: unreads first, then your latest conversations.
+pub fn latest_first(mut hits: Vec<Hit>) -> Vec<Hit> {
     hits.sort_by(|a, b| {
-        let key = |h: &Hit| (h.unread > 0, h.mention, h.unread, h.updated);
+        let key = |h: &Hit| (h.unread > 0, h.updated);
         key(b).cmp(&key(a))
     });
     hits
@@ -360,6 +425,47 @@ pub fn rank(mut hits: Vec<Hit>) -> Vec<Hit> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_channel_named_what_you_typed_comes_first_and_messages_come_last() {
+        let mut message = hit(0, false, 999, "talk about ifa");
+        message.kind = Kind::Message;
+        let mut person = hit(4, true, 900, "Clifford");
+        person.kind = Kind::Person;
+        let ranked = rank(
+            vec![
+                message,
+                person,
+                hit(0, false, 0, "#ifa-ops"),
+                hit(0, false, 0, "#ifa"),
+            ],
+            "ifa",
+        );
+        let titles: Vec<&str> = ranked.iter().map(|h| h.title.as_str()).collect();
+        assert_eq!(titles, ["#ifa", "#ifa-ops", "Clifford", "talk about ifa"]);
+    }
+
+    #[test]
+    fn with_nothing_typed_your_latest_conversations_come_first() {
+        let reply = json!({"messages": {"matches": [
+            {"ts": "1700000300.000100", "channel": {"id": "C2"}},
+            {"ts": "1700000100.000100", "channel": {"id": "D1"}},
+            {"ts": "1700000200.000100", "channel": {"id": "D1"}},
+            {"ts": "1700000900.000100", "channel": {}},
+        ]}});
+        let latest = last_written(&reply);
+        assert_eq!(latest.get("D1"), Some(&1_700_000_200));
+        assert_eq!(latest.len(), 2);
+        let mut dm = hit(0, true, 0, "dm");
+        dm.id = "D1".to_owned();
+        let mut channel = hit(0, false, 0, "channel");
+        channel.id = "C2".to_owned();
+        let quiet = hit(0, true, 0, "quiet-dm");
+        let unread = hit(2, false, 0, "unread");
+        let ordered = latest_first(with_recency(vec![quiet, dm, channel, unread], &latest));
+        let titles: Vec<&str> = ordered.iter().map(|h| h.title.as_str()).collect();
+        assert_eq!(titles, ["unread", "channel", "dm", "quiet-dm"]);
+    }
 
     fn hit(unread: u64, mention: bool, updated: u64, title: &str) -> Hit {
         Hit {
@@ -376,25 +482,31 @@ mod tests {
 
     #[test]
     fn unreads_come_before_read_conversations() {
-        let ranked = rank(vec![
-            hit(0, false, 500, "read-recent"),
-            hit(3, false, 100, "unread-old"),
-        ]);
+        let ranked = rank(
+            vec![
+                hit(0, false, 500, "read-recent"),
+                hit(3, false, 100, "unread-old"),
+            ],
+            "",
+        );
         assert_eq!(ranked[0].title, "unread-old");
     }
 
     #[test]
     fn a_mentioned_dm_beats_an_unread_channel() {
-        let ranked = rank(vec![hit(5, false, 100, "channel"), hit(1, true, 100, "dm")]);
+        let ranked = rank(
+            vec![hit(5, false, 100, "channel"), hit(1, true, 100, "dm")],
+            "",
+        );
         assert_eq!(ranked[0].title, "dm");
     }
 
     #[test]
     fn read_conversations_fall_back_to_recency() {
-        let ranked = rank(vec![
-            hit(0, false, 100, "older"),
-            hit(0, false, 900, "newer"),
-        ]);
+        let ranked = rank(
+            vec![hit(0, false, 100, "older"), hit(0, false, 900, "newer")],
+            "",
+        );
         assert_eq!(ranked[0].title, "newer");
     }
 
@@ -475,7 +587,7 @@ mod tests {
             .map(|n| hit(n % 3, n % 5 == 0, n, &format!("room {n}")))
             .collect();
         let start = std::time::Instant::now();
-        let found = rank(by_name(catalog, "room 123"));
+        let found = rank(by_name(catalog, "room 123"), "room 123");
         // 5000 rows filtered and sorted well under a frame; guards against O(n^2).
         assert!(
             start.elapsed().as_millis() < 50,
