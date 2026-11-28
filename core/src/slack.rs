@@ -4,7 +4,12 @@ use serde_json::Value;
 pub const FOLDER: &str = "slack";
 pub const CACHE: &str = "slack.json";
 pub const FRESH_FOR: u64 = 60;
-pub const KEYCHAIN_SERVICE: &str = "raiden-slack";
+/// Where the token lived when `/usr/bin/security` wrote it, read once to move it.
+pub const LEGACY_KEYCHAIN_SERVICE: &str = "raiden-slack";
+/// The installed app and the development build each keep their own token, so signing out of
+/// one leaves the other signed in.
+pub const KEYCHAIN_SERVICE: &str = "com.larsx2.raiden.slack";
+pub const DEV_KEYCHAIN_SERVICE: &str = "com.larsx2.raiden.dev.slack";
 pub const KEYCHAIN_ACCOUNT: &str = "user-token";
 pub const API: &str = "https://slack.com/api";
 pub const MANIFEST: &str = include_str!("../../assets/slack/manifest.json");
@@ -85,6 +90,13 @@ impl Problem {
         }
     }
 
+    pub fn cannot_search() -> Self {
+        Self::new(
+            ProblemKind::SignedOut,
+            "This token cannot search messages. Add the search:read user scope to the Raiden app in Slack, reinstall it, and paste the new token.",
+        )
+    }
+
     pub fn failed(detail: &str) -> Self {
         let detail = detail.trim().trim_end_matches('.');
         Self::new(
@@ -119,6 +131,23 @@ pub fn check(value: &Value, now: u64) -> Result<(), Problem> {
         "" => Problem::failed("an empty reply"),
         other => Problem::failed(&other.replace('_', " ")),
     })
+}
+
+/// Refuses a token Slack says lacks `search:read`, from a `search.messages` reply. Any other
+/// failure passes: an outage or a rate limit says nothing about the token's scopes.
+///
+/// ```
+/// use raiden_core::slack::can_search;
+/// use serde_json::json;
+/// assert!(can_search(&json!({"ok": false, "error": "missing_scope"})).is_err());
+/// assert!(can_search(&json!({"ok": false, "error": "ratelimited"})).is_ok());
+/// ```
+pub fn can_search(value: &Value) -> Result<(), Problem> {
+    if value.get("error").and_then(Value::as_str) == Some("missing_scope") {
+        Err(Problem::cannot_search())
+    } else {
+        Ok(())
+    }
 }
 
 /// Whether a typed query is long enough to search message text, not just names.
@@ -277,11 +306,7 @@ fn conversation(c: &Value, team: &str, names: &Names) -> Option<Hit> {
         let note = if private { "private" } else { "channel" };
         (Kind::Channel, hash, note.to_owned())
     };
-    let unread = c
-        .get("unread_count_display")
-        .and_then(Value::as_u64)
-        .or_else(|| c.get("unread_count").and_then(Value::as_u64))
-        .unwrap_or(0);
+    let unread = unread_of(c).unwrap_or(0);
     Some(Hit {
         link: if is_im {
             user_link(team, &text(c, "/user"))
@@ -296,6 +321,46 @@ fn conversation(c: &Value, team: &str, names: &Names) -> Option<Hit> {
         mention: is_im || is_mpim,
         updated: seconds(&text(c, "/latest/ts")),
     })
+}
+
+fn unread_of(c: &Value) -> Option<u64> {
+    c.get("unread_count_display")
+        .and_then(Value::as_u64)
+        .or_else(|| c.get("unread_count").and_then(Value::as_u64))
+}
+
+/// The direct and group messages worth a `conversations.info` call, latest first. Only that
+/// call carries unread counts, and only for DMs, one conversation per call.
+///
+/// ponytail: the `most` latest by when you wrote there; a DM you never answered is looked up
+/// only while there is room. A `client.counts`-style bulk source would lift that.
+pub fn dm_lookups(hits: &[Hit], most: usize) -> Vec<String> {
+    let mut dms: Vec<&Hit> = hits
+        .iter()
+        .filter(|h| matches!(h.kind, Kind::Person | Kind::Group))
+        .collect();
+    dms.sort_by_key(|h| std::cmp::Reverse(h.updated));
+    dms.into_iter().take(most).map(|h| h.id.clone()).collect()
+}
+
+/// Copies unread counts and the latest message time from `conversations.info` replies onto the
+/// conversations they describe.
+pub fn with_dm_state(mut hits: Vec<Hit>, replies: &[Value]) -> Vec<Hit> {
+    let by_id: std::collections::HashMap<String, &Value> = replies
+        .iter()
+        .filter(|reply| reply.get("ok").and_then(Value::as_bool) == Some(true))
+        .filter_map(|reply| reply.get("channel"))
+        .map(|c| (text(c, "/id"), c))
+        .collect();
+    for hit in &mut hits {
+        if let Some(c) = by_id.get(&hit.id) {
+            if let Some(unread) = unread_of(c) {
+                hit.unread = unread;
+            }
+            hit.updated = hit.updated.max(seconds(&text(c, "/latest/ts")));
+        }
+    }
+    hits
 }
 
 /// Message matches from a `search.messages` reply.
@@ -463,6 +528,29 @@ mod tests {
         kept.id = "C9".to_owned();
         let older = std::collections::HashMap::from([("C9".to_owned(), 100)]);
         assert_eq!(with_recency(vec![kept], &older)[0].updated, 500);
+    }
+
+    #[test]
+    fn a_dm_takes_its_unread_count_and_latest_message_from_conversations_info() {
+        let mut dm = hit(0, true, 100, "Ana");
+        dm.kind = Kind::Person;
+        dm.id = "D1".to_owned();
+        let mut group = hit(0, true, 0, "ana, bo");
+        group.kind = Kind::Group;
+        group.id = "G1".to_owned();
+        let mut channel = hit(0, false, 900, "#general");
+        channel.id = "C1".to_owned();
+        let hits = vec![channel, group, dm];
+        assert_eq!(dm_lookups(&hits, 5), ["D1", "G1"]);
+        assert_eq!(dm_lookups(&hits, 1), ["D1"]);
+        let replies = [
+            json!({"ok": true, "channel": {"id": "D1", "unread_count_display": 3, "latest": {"ts": "1700000000.1"}}}),
+            json!({"ok": false, "error": "ratelimited"}),
+        ];
+        let hits = latest_first(with_dm_state(hits, &replies));
+        assert_eq!(hits[0].title, "Ana");
+        assert_eq!((hits[0].unread, hits[0].updated), (3, 1_700_000_000));
+        assert_eq!(hits[2].unread, 0);
     }
 
     #[test]

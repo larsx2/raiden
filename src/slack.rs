@@ -10,6 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use objc2_app_kit::NSWorkspace;
 use objc2_foundation::{NSString, NSURL};
 use raiden_core::slack::{self, Hit, Names, Problem};
+use security_framework::passwords;
 use serde::Serialize;
 use serde_json::{Value, json};
 use tauri::{AppHandle, State};
@@ -26,7 +27,15 @@ const RETRY_AFTER: u64 = 30;
 const MESSAGES: usize = 20;
 const MOST: usize = 60;
 const PAGE: usize = 200;
-const PAGES: usize = 50;
+// conversations.list takes pages under 1000, so a big workspace needs fewer calls.
+const CONVERSATION_PAGE: usize = 999;
+// ponytail: a backstop against a cursor that never ends, far past any real workspace.
+const PAGES: usize = 1000;
+// A rate-limited page is retried after Slack's minute this many times before giving up.
+const LIMITED_RETRIES: usize = 10;
+// DMs looked up one by one for their unread count; see `slack::dm_lookups`.
+const DM_LOOKUPS: usize = 40;
+const DM_LOOKUP_THREADS: usize = 8;
 
 #[derive(Default)]
 struct Inner {
@@ -233,6 +242,14 @@ fn save_token(inner: &Arc<Inner>, token: &str) -> SlackView {
         return SlackView::blocked(Problem::signed_out());
     }
     let account = inner.account.fetch_add(1, Ordering::SeqCst) + 1;
+    // A token that cannot search messages would pass every name lookup and then fail on the
+    // first message search, so refuse it here and say which permission is missing.
+    if let Some(problem) = get(token, &search_url("from:me", 1))
+        .ok()
+        .and_then(|reply| slack::can_search(&reply).err())
+    {
+        return SlackView::blocked(problem);
+    }
     let catalog = match fetch_catalog(token) {
         Ok(catalog) => catalog,
         // The token never checked out, so keep onboarding open rather than
@@ -424,13 +441,14 @@ fn fetch_catalog(token: &str) -> Result<Catalog, Problem> {
         .unwrap_or_default()
         .to_owned();
 
-    let members = collect(token, "users.list", "", "members")?;
+    let members = collect(token, "users.list", PAGE, "", "members")?;
     let people = slack::people(&json!({ "members": members }), &team);
     let names = Names::from_people(&people);
 
     let channels = collect(
         token,
         "conversations.list",
+        CONVERSATION_PAGE,
         "exclude_archived=true&types=public_channel,private_channel,mpim,im",
         "channels",
     )?;
@@ -444,11 +462,43 @@ fn fetch_catalog(token: &str) -> Result<Catalog, Problem> {
         .map(|found| slack::last_written(&found))
         .unwrap_or_default();
     let conversations = slack::with_recency(conversations, &latest);
+    let replies = dm_state(token, &slack::dm_lookups(&conversations, DM_LOOKUPS));
+    let conversations = slack::with_dm_state(conversations, &replies);
 
     Ok(Catalog {
         fetched: now(),
         token: token.to_owned(),
         entries: entries(people, conversations),
+    })
+}
+
+// Asks `conversations.info` about each DM, a few at a time, for its unread count. A failed
+// lookup leaves that DM as it was.
+fn dm_state(token: &str, ids: &[String]) -> Vec<Value> {
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let share = ids.len().div_ceil(DM_LOOKUP_THREADS);
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = ids
+            .chunks(share)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .filter_map(|id| {
+                            let url =
+                                format!("{}/conversations.info?channel={}", slack::API, encode(id));
+                            get(token, &url).ok()
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap_or_default())
+            .collect()
     })
 }
 
@@ -486,11 +536,17 @@ fn entries(people: Vec<Hit>, conversations: Vec<Hit>) -> Vec<Entry> {
 
 // Reads every page of a Slack list endpoint, following the cursor, so names on
 // later pages of a large workspace are still found.
-fn collect(token: &str, endpoint: &str, params: &str, key: &str) -> Result<Vec<Value>, Problem> {
+fn collect(
+    token: &str,
+    endpoint: &str,
+    limit: usize,
+    params: &str,
+    key: &str,
+) -> Result<Vec<Value>, Problem> {
     let mut items = Vec::new();
     let mut cursor: Option<String> = None;
     for _ in 0..PAGES {
-        let mut url = format!("{}/{endpoint}?limit={PAGE}", slack::API);
+        let mut url = format!("{}/{endpoint}?limit={limit}", slack::API);
         if !params.is_empty() {
             url.push('&');
             url.push_str(params);
@@ -498,8 +554,7 @@ fn collect(token: &str, endpoint: &str, params: &str, key: &str) -> Result<Vec<V
         if let Some(cursor) = &cursor {
             url.push_str(&format!("&cursor={}", encode(cursor)));
         }
-        let page = get(token, &url)?;
-        slack::check(&page, now())?;
+        let page = page_through_limits(token, &url)?;
         if let Some(array) = page.get(key).and_then(Value::as_array) {
             items.extend(array.iter().cloned());
         }
@@ -515,11 +570,39 @@ fn collect(token: &str, endpoint: &str, params: &str, key: &str) -> Result<Vec<V
     Ok(items)
 }
 
+// A big workspace runs into Slack's per-minute limit while paging; waiting it out and going on
+// keeps every later page instead of failing the whole catalog.
+fn page_through_limits(token: &str, url: &str) -> Result<Value, Problem> {
+    let mut retries = 0;
+    loop {
+        let page = get(token, url)?;
+        match slack::check(&page, now()) {
+            Ok(()) => return Ok(page),
+            Err(problem)
+                if problem.kind == slack::ProblemKind::Limited && retries < LIMITED_RETRIES =>
+            {
+                retries += 1;
+                let wait = problem
+                    .retry_at
+                    .unwrap_or(0)
+                    .saturating_sub(now())
+                    .clamp(1, 60);
+                sleep(Duration::from_secs(wait));
+            }
+            Err(problem) => return Err(problem),
+        }
+    }
+}
+
 fn latest_url() -> String {
+    search_url("from:me", 100)
+}
+
+fn search_url(query: &str, count: usize) -> String {
     format!(
-        "{}/search.messages?count=100&sort=timestamp&query={}",
+        "{}/search.messages?count={count}&sort=timestamp&query={}",
         slack::API,
-        encode("from:me")
+        encode(query)
     )
 }
 
@@ -579,13 +662,41 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
+// Raiden itself writes the token through Security.framework, so the Keychain trusts Raiden's
+// code signature and asks before any other program, `security` included, may read it.
+const KEYCHAIN_SERVICE: &str = if cfg!(debug_assertions) {
+    slack::DEV_KEYCHAIN_SERVICE
+} else {
+    slack::KEYCHAIN_SERVICE
+};
+// errSecItemNotFound.
+const NOT_FOUND: i32 = -25300;
+
 fn token() -> Option<String> {
+    let token = match passwords::get_generic_password(KEYCHAIN_SERVICE, slack::KEYCHAIN_ACCOUNT) {
+        Ok(bytes) => String::from_utf8(bytes).ok()?,
+        Err(error) if error.code() == NOT_FOUND && !cfg!(debug_assertions) => moved_token()?,
+        Err(_) => return None,
+    };
+    valid_token(&token).then_some(token)
+}
+
+// Moves a token an earlier Raiden stored through `/usr/bin/security`, which any program could
+// read through that tool, into Raiden's own item, then removes the old one.
+fn moved_token() -> Option<String> {
+    let token = legacy_token()?;
+    store_token(&token).ok()?;
+    forget_legacy_token();
+    Some(token)
+}
+
+fn legacy_token() -> Option<String> {
     let (code, out) = run(
         SECURITY,
         &[
             "find-generic-password",
             "-s",
-            slack::KEYCHAIN_SERVICE,
+            slack::LEGACY_KEYCHAIN_SERVICE,
             "-a",
             slack::KEYCHAIN_ACCOUNT,
             "-w",
@@ -601,37 +712,29 @@ fn token() -> Option<String> {
 }
 
 fn store_token(token: &str) -> Result<(), Problem> {
-    // The token goes in twice on stdin, the way `security -w` prompts for it,
-    // so it never rides in argv where `ps` could read it.
-    let feed = format!("{token}\n{token}\n");
-    match run(
-        SECURITY,
-        &[
-            "add-generic-password",
-            "-U",
-            "-s",
-            slack::KEYCHAIN_SERVICE,
-            "-a",
-            slack::KEYCHAIN_ACCOUNT,
-            "-w",
-        ],
-        Some(&feed),
-        KEYCHAIN,
-    ) {
-        Some((0, _)) => Ok(()),
-        _ => Err(Problem::failed("the Keychain would not keep the token")),
-    }
+    passwords::set_generic_password(KEYCHAIN_SERVICE, slack::KEYCHAIN_ACCOUNT, token.as_bytes())
+        .map_err(|_| Problem::failed("the Keychain would not keep the token"))
 }
 
 // Removes the token, reporting whether it is now gone (success, or already
 // absent); only a real deletion failure returns false.
 fn forget_token() -> bool {
+    let gone = match passwords::delete_generic_password(KEYCHAIN_SERVICE, slack::KEYCHAIN_ACCOUNT) {
+        Ok(()) => true,
+        Err(error) => error.code() == NOT_FOUND,
+    };
+    // An old item that was never moved must not sign the person back in.
+    let legacy_gone = cfg!(debug_assertions) || forget_legacy_token();
+    gone && legacy_gone
+}
+
+fn forget_legacy_token() -> bool {
     match run(
         SECURITY,
         &[
             "delete-generic-password",
             "-s",
-            slack::KEYCHAIN_SERVICE,
+            slack::LEGACY_KEYCHAIN_SERVICE,
             "-a",
             slack::KEYCHAIN_ACCOUNT,
         ],
