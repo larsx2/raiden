@@ -447,7 +447,11 @@ export function App(props: {
   const loadRates = () =>
     void props.call<Rates | null>("currency_rates").then(
       (found) => {
-        if (found && Object.keys(found).length > 0) {
+        if (
+          found &&
+          Object.keys(found).length > 0 &&
+          JSON.stringify(found) !== JSON.stringify(rates())
+        ) {
           setRates(found);
           if (!typedText()) {
             return;

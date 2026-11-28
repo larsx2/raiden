@@ -32,6 +32,10 @@ describe("convert", () => {
     expect(convert("1 Min to s")?.to).toBe("60 s");
     expect(convert("1 Bar to psi")?.to).toBe("14.503773773 psi");
     expect(convert("1 ton to kg")?.to).toBe("907.18474 kg");
+    expect(convert("1 cup to oz")?.to).toBe("8 floz");
+    expect(convert("29.92 inhg to mb")?.to).toBe("1013.2075888 mbar");
+    expect(convert("32 f to c")?.to).toBe("0 °C");
+    expect(convert("98.6 f to c")?.to).toBe("37 °C");
     expect(convert("8 oz to ml")?.to).toBe("236.5882365 ml");
     expect(convert("1013 mb to inhg")?.to).toBe("29.9138699069 inHg");
     expect(convert("1 inhg to hpa")?.to).toBe("33.86389 hPa");

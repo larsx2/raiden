@@ -165,12 +165,19 @@ const foldedUnit = (name: string): Unit | null | undefined => {
 
 const ALTERNATES: Record<string, string> = { oz: "floz", MB: "mbar" };
 
-const alike = (one: Unit, other: Unit): Unit | undefined => {
-  if (one.kind === other.kind) {
-    return one;
+const alternate = (unit: Unit) => EXACT.get(ALTERNATES[unit.symbol] ?? "");
+
+const alike = (one: Unit, other: Unit): [Unit, Unit] | undefined => {
+  for (const [from, to] of [
+    [one, other],
+    [alternate(one), other],
+    [one, alternate(other)],
+  ]) {
+    if (from && to && from.kind === to.kind) {
+      return [from, to];
+    }
   }
-  const alternate = EXACT.get(ALTERNATES[one.symbol] ?? "");
-  return alternate?.kind === other.kind ? alternate : undefined;
+  return undefined;
 };
 
 const unitOf = (name: string, rates: Rates): Unit | undefined => {
@@ -216,10 +223,9 @@ const unitsOf = (sign: string, rest: string, rates: Rates): [Unit, Unit] | undef
     const named = rest.slice(0, separator.index).trim();
     const said = named ? unitOf(named, rates) : sign ? unitOf(sign, rates) : undefined;
     const asked = unitOf(rest.slice(separator.index + separator[0].length).trim(), rates);
-    const from = said && asked ? alike(said, asked) : undefined;
-    const to = from && asked ? alike(asked, from) : undefined;
-    if (from && to && (!sign || !named || unitOf(sign, rates)?.symbol === from.symbol)) {
-      return [from, to];
+    const pair = said && asked ? alike(said, asked) : undefined;
+    if (pair && (!sign || !named || unitOf(sign, rates)?.symbol === pair[0].symbol)) {
+      return pair;
     }
   }
   return undefined;
@@ -238,7 +244,8 @@ export function convert(text: string, rates: Rates = {}): Conversion | undefined
   const [from, to] = units;
   const amount = numberOf(digits!);
   const base = amount * from.factor + (from.offset ?? 0);
-  const value = (base - (to.offset ?? 0)) / to.factor;
+  const exact = (base - (to.offset ?? 0)) / to.factor;
+  const value = to.kind === "temperature" ? Number(exact.toFixed(10)) : exact;
   if (!Number.isFinite(value) || roughly(value) || roughly(amount)) {
     return undefined;
   }
