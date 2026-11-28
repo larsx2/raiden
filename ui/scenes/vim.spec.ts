@@ -451,21 +451,28 @@ test("Normal mode stays Normal while Quick Look takes the keyboard and gives it 
   await expect(badge(page)).toHaveText("NORMAL");
 });
 
-test("after j moves the selection, a returns to typing and Space types a space", async ({
-  page,
-}) => {
-  await openSearch(page, "&vim=1");
-  await page.keyboard.type("note");
-  await toNormal(page);
-  await page.keyboard.press("j");
-  await page.keyboard.press("a");
-  await page.keyboard.type(" x");
-  await expect(page.locator("#q")).toHaveValue("note x");
-  const looked = await page.evaluate(
-    () => window.sent.filter((call) => call.command === "quick_look").length,
-  );
-  expect(looked).toBe(0);
-});
+for (const key of ["a", "i"]) {
+  test(`after j moves onto a file, ${key} returns to typing and Space types a space`, async ({
+    page,
+  }) => {
+    await page.goto("/scene.html?fixture=files&vim=1");
+    await page.waitForLoadState("networkidle");
+    await page.locator(".row.selected").waitFor();
+    await page.keyboard.type("notes");
+    await expect(page.locator(".row")).toHaveCount(5);
+    await toNormal(page);
+    await page.keyboard.press("j");
+    await expect(page.locator(".row.selected .title")).toHaveText("notes.md");
+    await page.keyboard.press(key);
+    await expect(badge(page)).toHaveText("INSERT");
+    await page.keyboard.press("Space");
+    await expect(page.locator("#q")).toHaveValue(/ /);
+    const looked = await page.evaluate(
+      () => window.sent.filter((call) => call.command === "quick_look").length,
+    );
+    expect(looked).toBe(0);
+  });
+}
 
 const pressesToHide = async (page: Page) => {
   for (let presses = 1; presses <= 8; presses++) {

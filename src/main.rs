@@ -152,8 +152,7 @@ fn toggle(app: &AppHandle, pressed_at: Instant) {
             return;
         };
         if panel.is_visible() {
-            panel.hide();
-            mark_hidden(app);
+            hide_now(app, &panel);
         } else {
             app.state::<SpeedLog>().start_open(pressed_at);
             front::capture(app);
@@ -180,10 +179,18 @@ pub fn show_panel(app: &AppHandle) {
 pub fn hide_panel(app: &AppHandle) {
     on_main_thread(app, |app| {
         if let Ok(panel) = app.get_webview_panel(PANEL) {
-            panel.hide();
-            mark_hidden(app);
+            hide_now(app, &panel);
         }
     });
+}
+
+// The preview closes first, so the focus loss that hiding causes is not taken for Quick Look
+// borrowing the keyboard. The rest waits until Raiden is hidden, so keys typed ahead go to the app
+// behind it.
+fn hide_now(app: &AppHandle, panel: &tauri_nspanel::PanelHandle<tauri::Wry>) {
+    quick_look::close();
+    panel.hide();
+    mark_hidden(app);
 }
 
 fn lost_focus(app: &AppHandle) {
@@ -191,11 +198,13 @@ fn lost_focus(app: &AppHandle) {
         let Ok(panel) = app.get_webview_panel(PANEL) else {
             return;
         };
+        if !panel.is_visible() {
+            return;
+        }
         if quick_look::keeps_raiden_up(panel.as_panel()) {
             panel.make_key_window();
         } else {
-            panel.hide();
-            mark_hidden(app);
+            hide_now(app, &panel);
         }
     });
 }

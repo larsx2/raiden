@@ -20,6 +20,10 @@ use tauri_nspanel::ManagerExt;
 
 const LONGEST_CHAIN: usize = 64;
 const LOADING_TAKES_FOCUS_FOR: Duration = Duration::from_secs(5);
+// ponytail: without Accessibility the key monitor sees nothing, so a shortcut to another panel
+// (⌘Space) can't count as leaving; a short window caps how long Raiden may pull the keyboard back.
+// A slow preview that takes the keyboard later than this hides Raiden, as before the grace period.
+const LOADING_TAKES_FOCUS_UNWATCHED_FOR: Duration = Duration::from_secs(1);
 pub const EVENT: &str = "preview";
 
 #[derive(Default)]
@@ -52,7 +56,7 @@ define_class!(
             if let Some(panel) = panel {
                 unsafe { panel.setDataSource(None) };
                 if !panel.isVisible() {
-                    tell("closed");
+                    closed_by_itself();
                 }
             }
         }
@@ -97,7 +101,16 @@ thread_local! {
     static LOADED_AT: Cell<Option<(Instant, i32)>> = const { Cell::new(None) };
     static CLICKED_ELSEWHERE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
     static WATCHING: Cell<bool> = const { Cell::new(false) };
+    static SHOWING: Cell<bool> = const { Cell::new(false) };
     static APP: OnceCell<AppHandle> = const { OnceCell::new() };
+}
+
+// The screen hears only of closes it did not ask for, so its own close is not echoed back after a
+// newer open.
+fn closed_by_itself() {
+    if SHOWING.with(|showing| showing.replace(false)) {
+        tell("closed");
+    }
 }
 
 pub fn tell(what: &str) {
@@ -169,7 +182,7 @@ fn watch_once(panel: &QLPreviewPanel) {
     std::mem::forget(NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
         clicks, &clicked,
     ));
-    let closing = RcBlock::new(|_: NonNull<NSNotification>| tell("closed"));
+    let closing = RcBlock::new(|_: NonNull<NSNotification>| closed_by_itself());
     let observer = unsafe {
         NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
             Some(NSWindowWillCloseNotification),
@@ -219,6 +232,7 @@ pub fn look(app: &AppHandle, path: &str, follow: bool) -> bool {
         return false;
     }
     if !follow && let Some(panel) = &open {
+        SHOWING.with(|showing| showing.set(false));
         panel.orderOut(None);
         return false;
     }
@@ -235,12 +249,14 @@ pub fn look(app: &AppHandle, path: &str, follow: bool) -> bool {
         None => show(launcher.as_panel(), &previewer, mtm),
     };
     if shown {
+        SHOWING.with(|showing| showing.set(true));
         LOADED_AT.with(|at| at.set(Some((Instant::now(), frontmost_app()))));
     }
     shown
 }
 
 pub fn close() -> bool {
+    SHOWING.with(|showing| showing.set(false));
     let Some(panel) = MainThreadMarker::new().and_then(open_panel) else {
         return false;
     };
@@ -250,8 +266,9 @@ pub fn close() -> bool {
 
 // Quick Look draws previews in a system process that takes the keyboard once the content loads,
 // which looks to Raiden exactly like the user switching to another app. Raiden stays up through
-// that, but only while no other app has come to the front and no click has landed outside Raiden
-// since the preview opened.
+// that for a few seconds after each new file is shown, but only while no other app has come to the
+// front, no click or key press has landed outside Raiden, and no mouse button is held. Key presses
+// elsewhere are seen only with Accessibility access, so without it the window is shorter.
 pub fn keeps_raiden_up(launcher: &NSWindow) -> bool {
     let Some(mtm) = MainThreadMarker::new() else {
         return false;
@@ -264,18 +281,30 @@ pub fn keeps_raiden_up(launcher: &NSWindow) -> bool {
     let loading = LOADED_AT.with(Cell::get).is_some_and(|(at, frontmost)| {
         let clicked_since = clicked_elsewhere.is_some_and(|clicked| clicked >= at)
             || NSEvent::pressedMouseButtons() != 0;
-        just_loaded(at.elapsed(), frontmost, frontmost_app(), clicked_since)
+        let grace = if crate::access::trusted(false) {
+            LOADING_TAKES_FOCUS_FOR
+        } else {
+            LOADING_TAKES_FOCUS_UNWATCHED_FOR
+        };
+        just_loaded(
+            at.elapsed(),
+            grace,
+            frontmost,
+            frontmost_app(),
+            clicked_since,
+        )
     });
     stays_up(preview.is_some(), holding || loading)
 }
 
 fn just_loaded(
     since: Duration,
+    grace: Duration,
     frontmost_then: i32,
     frontmost_now: i32,
     clicked_elsewhere: bool,
 ) -> bool {
-    since < LOADING_TAKES_FOCUS_FOR && frontmost_then == frontmost_now && !clicked_elsewhere
+    since < grace && frontmost_then == frontmost_now && !clicked_elsewhere
 }
 
 fn stays_up(previewing: bool, raiden_has_the_keyboard_or_just_previewed: bool) -> bool {
@@ -289,10 +318,15 @@ mod tests {
     #[test]
     fn a_just_loaded_preview_keeps_raiden_up_until_the_user_goes_elsewhere() {
         let soon = Duration::from_millis(200);
-        assert!(just_loaded(soon, 42, 42, false));
-        assert!(!just_loaded(soon, 42, 77, false));
-        assert!(!just_loaded(soon, 42, 42, true));
-        assert!(!just_loaded(LOADING_TAKES_FOCUS_FOR, 42, 42, false));
+        let grace = LOADING_TAKES_FOCUS_FOR;
+        assert!(just_loaded(soon, grace, 42, 42, false));
+        assert!(!just_loaded(soon, grace, 42, 77, false));
+        assert!(!just_loaded(soon, grace, 42, 42, true));
+        assert!(!just_loaded(grace, grace, 42, 42, false));
+        let unwatched = LOADING_TAKES_FOCUS_UNWATCHED_FOR;
+        assert!(just_loaded(soon, unwatched, 42, 42, false));
+        assert!(!just_loaded(unwatched, unwatched, 42, 42, false));
+        assert!(unwatched < grace);
     }
 
     #[test]

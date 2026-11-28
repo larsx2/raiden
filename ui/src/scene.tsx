@@ -358,6 +358,10 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
     case "close_quick_look": {
       const was = looking;
       looking = false;
+      if (params.get("echo") === "1") {
+        await new Promise((done) => setTimeout(done, 100));
+        window.previewEvent?.("closed");
+      }
       return was as T;
     }
     case "pull_requests":

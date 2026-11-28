@@ -74,8 +74,18 @@ pub async fn open_link(app: AppHandle, url: String) -> Result<(), String> {
 }
 
 fn is_app_folder(path: &str) -> bool {
-    let target = Path::new(path);
-    target.is_absolute() && path.ends_with(".app") && target.is_dir()
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    is_app_in(path, &raiden_core::apps::folders(&home))
+}
+
+// The same apps the app list shows, so an app Raiden leaves out (CoreServices) is refused too.
+fn is_app_in(path: &str, folders: &[PathBuf]) -> bool {
+    Path::new(path).is_absolute()
+        && raiden_core::apps::installed(folders)
+            .iter()
+            .any(|app| app.path == path)
 }
 
 fn is_found_file(path: &str) -> bool {
@@ -195,7 +205,7 @@ pub fn open_in_editor(file: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_app_folder, is_found_file, shown_by_raiden, web_link};
+    use super::{is_app_folder, is_app_in, is_found_file, shown_by_raiden, web_link};
 
     #[test]
     fn opens_only_web_links() {
@@ -220,20 +230,32 @@ mod tests {
     }
 
     #[test]
-    fn shows_only_absolute_app_folders() {
-        let folder = std::env::temp_dir().join(format!("raiden-{}.app", std::process::id()));
-        std::fs::create_dir_all(&folder).unwrap();
-        let file = folder.with_extension("txt");
+    fn shows_only_app_folders_in_the_folders_apps_are_listed_from() {
+        let listed = std::env::temp_dir().join(format!("raiden-apps-{}", std::process::id()));
+        let elsewhere = listed.join("elsewhere");
+        let app = listed.join("Shown.app");
+        let hidden_away = elsewhere.join("Other.app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(&hidden_away).unwrap();
+        let file = listed.join("Plain.app.txt");
         std::fs::write(&file, "").unwrap();
-        let shown = is_app_folder(folder.to_str().unwrap());
-        let plain_file = is_app_folder(file.to_str().unwrap());
-        std::fs::remove_dir(&folder).unwrap();
-        std::fs::remove_file(&file).unwrap();
+        let folders = [listed.clone()];
+        let shown = is_app_in(app.to_str().unwrap(), &folders);
+        let not_listed = is_app_in(hidden_away.to_str().unwrap(), &folders);
+        let plain_file = is_app_in(file.to_str().unwrap(), &folders);
+        std::fs::remove_dir_all(&listed).unwrap();
         assert!(shown);
+        assert!(!not_listed);
         assert!(!plain_file);
-        assert!(!is_app_folder("Safari.app"));
+        assert!(!is_app_in("Shown.app", &folders));
+        assert!(!is_app_in(
+            "/nowhere/Missing.app",
+            &[std::path::PathBuf::from("/nowhere")]
+        ));
+        assert!(is_app_folder("/System/Applications/Calculator.app"));
+        assert!(is_app_folder("/System/Library/CoreServices/Finder.app"));
+        assert!(!is_app_folder("/System/Library/CoreServices/Siri.app"));
         assert!(!is_app_folder("/Applications"));
-        assert!(!is_app_folder("/nowhere/Missing.app"));
     }
 
     #[test]
@@ -276,7 +298,11 @@ mod tests {
         let file_shown = shown_by_raiden(file, |shown| shown == file);
         let other_shown = shown_by_raiden(file, |shown| shown != file);
         std::fs::remove_dir_all(&folder).unwrap();
-        assert!(app_unshown);
+        assert!(!app_unshown);
+        assert!(shown_by_raiden(
+            "/System/Applications/Calculator.app",
+            |_| false
+        ));
         assert!(!file_unshown);
         assert!(file_shown);
         assert!(!other_shown);

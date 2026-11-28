@@ -887,12 +887,18 @@ export function App(props: {
 
   let previews: Promise<void> = Promise.resolve();
   let previewAsked = 0;
+  let previewsPending = 0;
 
   const inTurn = (work: () => Promise<void>) => {
     const before = previews;
+    previewsPending += 1;
     previews = (async () => {
       await before;
-      await work();
+      try {
+        await work();
+      } finally {
+        previewsPending -= 1;
+      }
     })();
     return previews;
   };
@@ -1558,7 +1564,7 @@ export function App(props: {
   };
   const onKeyDown = (event: KeyboardEvent) => {
     keyDownAt = event.timeStamp;
-    if (CARET_KEYS.has(event.key)) {
+    if (CARET_KEYS.has(event.key) && menu() === null) {
       browsing = false;
     }
     if (event.repeat && event.key === "Enter" && covered()) {
@@ -1671,6 +1677,11 @@ export function App(props: {
   };
 
   const onPreview = (what: string) => {
+    // ponytail: a close while requests are queued is taken as the echo of Raiden's own close, and
+    // the replies decide; a real close landing in that instant is missed until the next Space.
+    if (what === "closed" && previewsPending > 0) {
+      return;
+    }
     previewing = false;
     previewAsked += 1;
     if (what === "hidden" && leaving !== undefined) {

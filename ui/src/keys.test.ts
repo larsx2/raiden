@@ -384,7 +384,7 @@ describe("Quick Look", () => {
     expect(a.hide).not.toHaveBeenCalled();
   });
 
-  it("Space with a modifier, held Space, and other screens leave Quick Look alone", () => {
+  it("Shift+Space previews as Space does, while held Space, ⌥Space and other screens leave Quick Look alone", () => {
     const a = actions();
     expect(handleKey({ key: " ", shiftKey: true }, browsing, a)).toBe(true);
     expect(handleKey({ key: " ", repeat: true }, browsing, a)).toBe(true);
