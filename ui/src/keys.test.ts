@@ -21,6 +21,7 @@ const actions = () => ({
   line: vi.fn(),
   edge: vi.fn(),
   tab: vi.fn(),
+  edit: vi.fn(() => false),
 });
 const list = { menu: false, pressing: false, search: "", held: "" };
 const menu = { menu: true, pressing: false, search: "", held: "" };
