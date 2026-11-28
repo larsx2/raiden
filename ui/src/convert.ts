@@ -1,6 +1,6 @@
 export type Rates = Record<string, number>;
 
-export type Conversion = { from: string; to: string; value: string };
+export type Conversion = { to: string; value: string };
 
 type Unit = { kind: string; symbol: string; factor: number; offset?: number };
 
@@ -91,7 +91,7 @@ const UNITS: Record<string, [string, number, string[]][]> = {
     ["J", 1, ["joule", "joules"]],
     ["kJ", 1000, ["kilojoule", "kilojoules"]],
     ["cal", 4.184, ["calorie", "calories"]],
-    ["kcal", 4184, ["kilocalorie", "kilocalories"]],
+    ["kcal", 4184, ["Cal", "kilocalorie", "kilocalories"]],
     ["Wh", 3600, ["watt hour", "watt hours"]],
     ["kWh", 3.6e6, ["kilowatt hour", "kilowatt hours"]],
     ["BTU", 1055.05585262, ["btu", "btus"]],
@@ -146,7 +146,19 @@ for (const [symbol, factor, offset, names] of TEMPERATURES) {
 
 const MEANINGFUL_CASE = "mMbB";
 
-const PREFIX_CLASHES = new Set(["Mg", "Mm", "Ms", "Gb", "Mb", "Kb", "Tb"]);
+const PREFIX_CLASHES = new Set([
+  "Mg",
+  "Mm",
+  "Ms",
+  "Gb",
+  "Mb",
+  "Kb",
+  "Tb",
+  "Kib",
+  "Mib",
+  "Gib",
+  "Tib",
+]);
 
 const titled = (name: string) =>
   name.length > 1 && name === name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
@@ -250,7 +262,6 @@ export function convert(text: string, rates: Rates = {}): Conversion | undefined
     return undefined;
   }
   return {
-    from: `${shown(amount, from.kind)} ${from.symbol}`,
     to: `${shown(value, to.kind)} ${to.symbol}`,
     value: to.kind === "currency" ? money(value, false) : plain(value),
   };

@@ -40,8 +40,12 @@ describe("convert", () => {
     expect(convert("1013 mb to inhg")?.to).toBe("29.9138699069 inHg");
     expect(convert("1 inhg to hpa")?.to).toBe("33.86389 hPa");
     expect(convert("123456789012345678 g to kg")).toBeUndefined();
+    expect(convert("250 Cal to kJ")?.to).toBe("1046 kJ");
+    expect(convert("1 cal to J")?.to).toBe("4.184 J");
     for (const text of [
       "1 Gb to MB",
+      "1 Gib to MB",
+      "1 Kib to B",
       "1 Mm to km",
       "1 Ms to s",
       "1 mPa to Pa",
@@ -65,7 +69,6 @@ describe("convert", () => {
 
   it("converts currencies with the rates it is given", () => {
     expect(convert("100 usd to mxn", RATES)).toEqual({
-      from: "100.00 USD",
       to: "1,800.00 MXN",
       value: "1800.00",
     });
