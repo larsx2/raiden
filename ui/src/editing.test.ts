@@ -202,5 +202,9 @@ describe("keys left for the screen", () => {
     expect(shown(type("cafe\u0301 bar", 6, "b"))).toBe("|cafe\u0301 bar");
     expect(shown(type("cafe\u0301 bar", 1, "diw"))).toBe("| bar");
     expect(shown(type("नमस्ते दुनिया", 0, "dw"))).toBe("|दुनिया");
+    expect(shown(type("नमस्ते दुनिया", 0, "fतx"))).toBe("|मस्ते दुनिया");
+    expect(shown(type("a" + "\u0301".repeat(20_000) + " b", 0, "w"))).toBe(
+      "a" + "\u0301".repeat(20_000) + " |b",
+    );
   });
 });

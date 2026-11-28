@@ -57,6 +57,7 @@ const rest = (text: string, at: number) => Math.min(Math.max(0, at), lastChar(te
 export const blockOf = (line: Line): [number, number] => [line.at, after(line.text, line.at)];
 
 const JOINS = /^[\p{M}\u200d]$/u;
+const JOIN_LIMIT = 32;
 const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
 const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
 
@@ -70,7 +71,7 @@ function kindAt(text: string, at: number, big: boolean): number {
     return 0;
   }
   let start = at;
-  while (start > 0 && joined(text, start)) {
+  while (start > 0 && at - start < JOIN_LIMIT && joined(text, start)) {
     start--;
   }
   const char = pointAt(text, start);
@@ -126,6 +127,22 @@ function wordBack(text: string, at: number, big: boolean): number {
 
 const firstWord = (text: string) => Math.max(0, text.search(/\S/));
 
+function findAfter(text: string, char: string, from: number): number {
+  let found = text.indexOf(char, from);
+  while (found >= 0 && charStart(text, found) !== found) {
+    found = text.indexOf(char, found + 1);
+  }
+  return found;
+}
+
+function findBefore(text: string, char: string, from: number): number {
+  let found = from < 0 ? -1 : text.lastIndexOf(char, from);
+  while (found > 0 && charStart(text, found) !== found) {
+    found = text.lastIndexOf(char, found - 1);
+  }
+  return found;
+}
+
 function findChar(
   text: string,
   at: number,
@@ -141,11 +158,7 @@ function findChar(
     const from = forward
       ? after(text, skip ? after(text, next) : next)
       : (skip ? before(text, next) : next) - 1;
-    const found = forward
-      ? text.indexOf(find.char, from)
-      : from < 0
-        ? -1
-        : text.lastIndexOf(find.char, from);
+    const found = forward ? findAfter(text, find.char, from) : findBefore(text, find.char, from);
     if (found < 0) {
       return undefined;
     }
