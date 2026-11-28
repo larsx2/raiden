@@ -699,6 +699,25 @@ test.describe("editing the question in Ask AI", () => {
     await expect(page.locator("#q")).not.toHaveAttribute("placeholder", "Ask a follow-up");
   });
 
+  test("a key from an input method after f drops the find, so the next key is a command again", async ({
+    page,
+  }) => {
+    await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
+    await page.waitForLoadState("load");
+    await page.locator(`#ai[data-phase="done"]`).waitFor();
+    await page.keyboard.type("abc");
+    await toNormal(page);
+    await page.keyboard.press("0");
+    await page.keyboard.press("f");
+    await page.evaluate(() => {
+      const composing = new KeyboardEvent("keydown", { key: "Process", bubbles: true });
+      Object.defineProperty(composing, "keyCode", { value: 229 });
+      document.dispatchEvent(composing);
+    });
+    await page.keyboard.press("x");
+    await expect(page.locator("#q")).toHaveValue("bc");
+  });
+
   test("u takes back typing that began with a click", async ({ page }) => {
     await page.goto("/scene.html?fixture=answer&moment=done&vim=1");
     await page.waitForLoadState("load");
