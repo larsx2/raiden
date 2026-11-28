@@ -397,7 +397,13 @@ fn ensure_catalog(inner: &Arc<Inner>, token: &str) -> Result<(), Problem> {
             let busy = Filling::start(inner);
             std::thread::spawn(move || {
                 let _busy = busy;
-                if let Ok(_fetching) = refreshing.fetching.try_lock() {
+                // A fetch that panicked earlier poisons the lock; refreshing must go on after it.
+                let fetching = match refreshing.fetching.try_lock() {
+                    Ok(guard) => Some(guard),
+                    Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+                    Err(std::sync::TryLockError::WouldBlock) => None,
+                };
+                if let Some(_fetching) = fetching {
                     let _ = refresh(&refreshing, &token);
                 }
             });
