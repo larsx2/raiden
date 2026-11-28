@@ -617,7 +617,7 @@ test("a paste back that fails keeps the answer up and says why", async ({ page }
   expect(await sent(page, "paste_back")).toHaveLength(1);
 });
 
-test("typing stays cheap while an answer streams in fast", async ({ page }) => {
+test("typing stays cheap while an answer streams in fast", { tag: "@speed" }, async ({ page }) => {
   await openScene(page, "&moment=streaming");
   await expect(page.locator("#ai")).toHaveAttribute("data-phase", "streaming");
   const id = await askedId(page);
@@ -1060,85 +1060,89 @@ const LONG_CODE = Array.from(
 `,
 ).join("");
 
-test("300 lines of code streaming in keep each update within a frame", async ({ page }) => {
-  await page.addInitScript(() => {
-    const frame = window.requestAnimationFrame.bind(window);
-    const costs: number[] = [];
-    const tasks: number[] = [];
-    Object.assign(window, { costs, tasks });
-    const Channel = window.MessageChannel;
-    window.MessageChannel = class extends Channel {
-      constructor() {
-        super();
-        const port = this.port1;
-        Object.defineProperty(port, "onmessage", {
-          set(handler: (event: MessageEvent) => void) {
-            port.addEventListener("message", (event) => {
-              const started = performance.now();
-              handler(event);
-              void document.body.offsetHeight;
-              tasks.push(performance.now() - started);
-            });
-            port.start();
-          },
+test(
+  "300 lines of code streaming in keep each update within a frame",
+  { tag: "@speed" },
+  async ({ page }) => {
+    await page.addInitScript(() => {
+      const frame = window.requestAnimationFrame.bind(window);
+      const costs: number[] = [];
+      const tasks: number[] = [];
+      Object.assign(window, { costs, tasks });
+      const Channel = window.MessageChannel;
+      window.MessageChannel = class extends Channel {
+        constructor() {
+          super();
+          const port = this.port1;
+          Object.defineProperty(port, "onmessage", {
+            set(handler: (event: MessageEvent) => void) {
+              port.addEventListener("message", (event) => {
+                const started = performance.now();
+                handler(event);
+                void document.body.offsetHeight;
+                tasks.push(performance.now() - started);
+              });
+              port.start();
+            },
+          });
+        }
+      };
+      window.requestAnimationFrame = (callback) =>
+        frame((time) => {
+          const started = performance.now();
+          callback(time);
+          void document.body.offsetHeight;
+          costs.push(performance.now() - started);
         });
+    });
+    await openScene(page, "&moment=streaming");
+    await expect(page.locator("#ai")).toHaveAttribute("data-phase", "streaming");
+    const id = await askedId(page);
+    const pieces = [
+      "\n\n```ts\n",
+      ...(LONG_CODE.match(/\s*\w{1,6}|\s*[^\w\s]+|\s+/g) ?? []),
+      "```\n",
+    ];
+    expect(LONG_CODE.split("\n")).toHaveLength(301);
+    await page.evaluate(
+      async ({ streaming, told }) => {
+        const costs = (window as unknown as { costs: number[] }).costs;
+        costs.length = 0;
+        const emit = (text: string) =>
+          window.emitAnswer({ id: streaming, kind: "delta", text, model: "haiku", hidden: {} });
+        for (let at = 0; at < told.length; at += 32) {
+          told.slice(at, at + 32).forEach(emit);
+          await new Promise((next) => setTimeout(next, 16));
+        }
+        await new Promise((next) => setTimeout(next, 50));
+      },
+      { streaming: id, told: pieces },
+    );
+    const costs = await page.evaluate(() => (window as unknown as { costs: number[] }).costs);
+    const sorted = costs.toSorted((a, b) => a - b);
+    const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1] ?? Infinity;
+    const slowest = sorted.at(-1) ?? Infinity;
+    test.info().annotations.push({
+      type: "speed",
+      description: `code streaming: ${pieces.length} pieces, ${costs.length} updates, p95 ${p95.toFixed(1)} ms, slowest ${slowest.toFixed(1)} ms`,
+    });
+    await expect(page.locator(".ai-a pre code .tk-comment")).toHaveCount(50);
+    await expect(page.locator(".ai-a pre code > span")).toHaveCount(8);
+    const whole = await page.evaluate(async (streaming) => {
+      const tasks = (window as unknown as { tasks: number[] }).tasks;
+      tasks.length = 0;
+      window.emitAnswer({ id: streaming, kind: "done", text: "", model: "haiku", hidden: {} });
+      while (document.querySelectorAll(".ai-a pre code > span").length !== 1) {
+        await new Promise((next) => setTimeout(next, 5));
       }
-    };
-    window.requestAnimationFrame = (callback) =>
-      frame((time) => {
-        const started = performance.now();
-        callback(time);
-        void document.body.offsetHeight;
-        costs.push(performance.now() - started);
-      });
-  });
-  await openScene(page, "&moment=streaming");
-  await expect(page.locator("#ai")).toHaveAttribute("data-phase", "streaming");
-  const id = await askedId(page);
-  const pieces = [
-    "\n\n```ts\n",
-    ...(LONG_CODE.match(/\s*\w{1,6}|\s*[^\w\s]+|\s+/g) ?? []),
-    "```\n",
-  ];
-  expect(LONG_CODE.split("\n")).toHaveLength(301);
-  await page.evaluate(
-    async ({ streaming, told }) => {
-      const costs = (window as unknown as { costs: number[] }).costs;
-      costs.length = 0;
-      const emit = (text: string) =>
-        window.emitAnswer({ id: streaming, kind: "delta", text, model: "haiku", hidden: {} });
-      for (let at = 0; at < told.length; at += 32) {
-        told.slice(at, at + 32).forEach(emit);
-        await new Promise((next) => setTimeout(next, 16));
-      }
-      await new Promise((next) => setTimeout(next, 50));
-    },
-    { streaming: id, told: pieces },
-  );
-  const costs = await page.evaluate(() => (window as unknown as { costs: number[] }).costs);
-  const sorted = costs.toSorted((a, b) => a - b);
-  const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1] ?? Infinity;
-  const slowest = sorted.at(-1) ?? Infinity;
-  test.info().annotations.push({
-    type: "speed",
-    description: `code streaming: ${pieces.length} pieces, ${costs.length} updates, p95 ${p95.toFixed(1)} ms, slowest ${slowest.toFixed(1)} ms`,
-  });
-  await expect(page.locator(".ai-a pre code .tk-comment")).toHaveCount(50);
-  await expect(page.locator(".ai-a pre code > span")).toHaveCount(8);
-  const whole = await page.evaluate(async (streaming) => {
-    const tasks = (window as unknown as { tasks: number[] }).tasks;
-    tasks.length = 0;
-    window.emitAnswer({ id: streaming, kind: "done", text: "", model: "haiku", hidden: {} });
-    while (document.querySelectorAll(".ai-a pre code > span").length !== 1) {
-      await new Promise((next) => setTimeout(next, 5));
-    }
-    return tasks.length > 0 ? Math.max(...tasks) : Infinity;
-  }, id);
-  test.info().annotations.push({
-    type: "speed",
-    description: `the block colored whole after the answer ends: ${whole.toFixed(1)} ms`,
-  });
-  expect(p95).toBeLessThan(8);
-  expect(slowest).toBeLessThan(16.7);
-  expect(whole).toBeLessThan(16.7);
-});
+      return tasks.length > 0 ? Math.max(...tasks) : Infinity;
+    }, id);
+    test.info().annotations.push({
+      type: "speed",
+      description: `the block colored whole after the answer ends: ${whole.toFixed(1)} ms`,
+    });
+    expect(p95).toBeLessThan(8);
+    expect(slowest).toBeLessThan(16.7);
+    expect(whole).toBeLessThan(16.7);
+  },
+);
