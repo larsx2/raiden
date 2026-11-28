@@ -58,10 +58,17 @@ struct Catalog {
 }
 
 impl Slack {
+    // Fetches the catalog in the background at launch, so the first Tab into Slack has it ready
+    // instead of waiting on the whole workspace.
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Inner::default()),
-        }
+        let inner = Arc::new(Inner::default());
+        let warming = inner.clone();
+        std::thread::spawn(move || {
+            if let Some(token) = warming.cached_token() {
+                let _ = ensure_catalog(&warming, &token);
+            }
+        });
+        Self { inner }
     }
 }
 
@@ -204,7 +211,7 @@ fn in_slack_app(link: &str) -> bool {
 
 const SLACK_APP_ID: &str = "com.tinyspeck.slackmacgap";
 
-fn save_token(inner: &Inner, token: &str) -> SlackView {
+fn save_token(inner: &Arc<Inner>, token: &str) -> SlackView {
     if !valid_token(token) {
         return SlackView::blocked(Problem::signed_out());
     }
@@ -256,7 +263,7 @@ fn sign_out(inner: &Inner) -> SlackView {
     }
 }
 
-fn search(inner: &Inner, query: &str) -> SlackView {
+fn search(inner: &Arc<Inner>, query: &str) -> SlackView {
     let Some(token) = inner.cached_token() else {
         return SlackView::signed_out();
     };
@@ -308,22 +315,41 @@ fn search(inner: &Inner, query: &str) -> SlackView {
     }
 }
 
-fn ensure_catalog(inner: &Inner, token: &str) -> Result<(), Problem> {
-    let fresh = || {
+fn ensure_catalog(inner: &Arc<Inner>, token: &str) -> Result<(), Problem> {
+    let age = || {
         let guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
-        guard.as_ref().is_some_and(|catalog| {
-            catalog.token == token && now().saturating_sub(catalog.fetched) < CATALOG_FRESH
-        })
+        guard
+            .as_ref()
+            .filter(|catalog| catalog.token == token)
+            .map(|catalog| now().saturating_sub(catalog.fetched))
     };
-    if fresh() {
-        return Ok(());
+    match age() {
+        Some(age) if age < CATALOG_FRESH => return Ok(()),
+        // An old catalog still answers at once; a fresh one is fetched behind it, unless a fetch
+        // is already running.
+        Some(_) => {
+            let refreshing = inner.clone();
+            let token = token.to_owned();
+            std::thread::spawn(move || {
+                if let Ok(_fetching) = refreshing.fetching.try_lock() {
+                    let _ = refresh(&refreshing, &token);
+                }
+            });
+            return Ok(());
+        }
+        None => {}
     }
     // One fetch at a time: a burst of cold searches waits here, then finds the
     // catalog the first of them built instead of each hitting Slack.
     let _fetching = inner.fetching.lock().unwrap_or_else(|e| e.into_inner());
-    if fresh() {
+    if age().is_some() {
         return Ok(());
     }
+    refresh(inner, token)
+}
+
+// Fetches the catalog and installs it; the caller holds `fetching`.
+fn refresh(inner: &Inner, token: &str) -> Result<(), Problem> {
     let account = inner.account.load(Ordering::SeqCst);
     let catalog = fetch_catalog(token)?;
     // Only install if the account has not changed and no newer catalog for a

@@ -87,7 +87,7 @@ export function SlackList(props: { slack: Slack }): JSX.Element {
         <Show
           when={slack().shown().length > 0}
           fallback={
-            <Show when={slack().loaded()}>
+            <Show when={slack().loaded()} fallback={<div class="none">Loading Slack…</div>}>
               <Show
                 when={slack().problem()}
                 fallback={

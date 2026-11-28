@@ -48,6 +48,13 @@ test.describe("getting there", () => {
 });
 
 test.describe("results", () => {
+  test("the first Tab after Raiden starts shows the list once Slack answers", async ({ page }) => {
+    await openSlack(page, "&slackcold=1");
+    await expect(page.locator(".list.slack .none")).toHaveText("Loading Slack…");
+    await expect(names(page).first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator(".list.slack .none")).toHaveCount(0);
+  });
+
   test("shows the catalog with unread direct messages first and unread counts", async ({
     page,
   }) => {

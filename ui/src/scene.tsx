@@ -172,6 +172,7 @@ window.editSettings = (edit) => {
   }
 };
 
+let slackWarm = false;
 let slackHasToken = params.get("slacktoken") !== "0";
 const slackRank = (hits: FixtureHit[]) =>
   [...hits].sort((a, b) => {
@@ -447,6 +448,11 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
     case "slack_has_token":
       return slackHasToken as T;
     case "slack_search":
+      // A cold start fetches the whole workspace first, so the first answer is slow.
+      if (params.get("slackcold") === "1" && !slackWarm) {
+        slackWarm = true;
+        await new Promise((done) => setTimeout(done, 1500));
+      }
       return slackView(String(args?.["query"] ?? "")) as T;
     case "slack_save_token": {
       const token = String(args?.["token"] ?? "");
