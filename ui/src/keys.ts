@@ -43,6 +43,7 @@ export type PanelActions = {
   line: (step: 1 | -1) => void;
   edge: (last: boolean) => void;
   tab: (step: 1 | -1) => void;
+  edit: (event: Keystroke) => boolean;
 };
 
 export function shortcutOf(event: Keystroke): string {
@@ -60,7 +61,7 @@ export function shortcutOf(event: Keystroke): string {
 const inside = (view: PanelView) =>
   view.answer === true || view.settings === true || view.clipboard === true || view.pulls === true;
 
-const COMPOSING = 229;
+export const COMPOSING = 229;
 const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn", "OS"]);
 const TO_INSERT = new Set(["i", "a", "/"]);
 const ONE_SHOT = new Set([...TO_INSERT, "g"]);
@@ -224,6 +225,9 @@ export function handleKey(event: Keystroke, view: PanelView, actions: PanelActio
   const waiting = view.waiting === true;
   if (waiting) {
     actions.wait(false);
+  }
+  if (view.answer === true && vimNormal(view) && !waiting && actions.edit(event)) {
+    return true;
   }
   if (event.metaKey === true && event.key.toLowerCase() === "k") {
     actions.toggleMenu();

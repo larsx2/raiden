@@ -27,6 +27,15 @@ import {
   type Conversation,
 } from "./ask";
 import { createAsking } from "./asking";
+import {
+  blockOf,
+  freshEditor,
+  press as pressEdit,
+  remember,
+  settle as settleEdit,
+  tokenOf,
+  type Line,
+} from "./editing";
 import { ClipboardList } from "./ClipboardList";
 import { CLIPBOARD_PLACEHOLDER, CLIPBOARD_TITLE, DELETE_KEYS, createClipboard } from "./clipboard";
 import {
@@ -37,7 +46,7 @@ import {
   type FileRow,
 } from "./files";
 import { createFrameWatcher } from "./frames";
-import { handleKey, stepsBack, switchesToInsert } from "./keys";
+import { COMPOSING, handleKey, stepsBack, switchesToInsert, type Keystroke } from "./keys";
 import {
   pieces,
   sectionsOf,
@@ -191,6 +200,7 @@ export function App(props: {
     setSearchNote("");
   };
   const normal = () => vimOn() && mode() === "normal";
+  let editor = freshEditor();
   const findables = createMemo(() => saved().map(findable));
   const shownActions = createMemo(() => filterActions(menu()?.actions ?? [], menuQuery()));
   const requested = new Set<string>();
@@ -501,6 +511,7 @@ export function App(props: {
   let startOverOnHide = false;
 
   const leaveAnswer = () => {
+    editor = freshEditor();
     asking.leave();
     batch(() => {
       setAnswering(false);
@@ -540,6 +551,7 @@ export function App(props: {
   };
 
   const startAsking = (question: string) => {
+    editor = freshEditor();
     batch(() => {
       setMenu(null);
       setAnswering(true);
@@ -552,6 +564,7 @@ export function App(props: {
   };
 
   const showAnswer = (conversation: Conversation) => {
+    editor = freshEditor();
     batch(() => {
       setMenu(null);
       setAnswering(true);
@@ -928,6 +941,7 @@ export function App(props: {
 
   const askFollowUp = () => {
     const question = draft().trim();
+    editor = { ...freshEditor(), register: editor.register, find: editor.find };
     if (field) {
       field.value = "";
     }
@@ -1069,6 +1083,9 @@ export function App(props: {
       setMenuQuery("");
       setMenuSelected(0);
     } else if (field) {
+      if (chatting() && field.value !== "") {
+        editor = remember(editor, lineOf(field));
+      }
       field.value = "";
       if (clip.open()) {
         clip.filter("");
@@ -1310,6 +1327,11 @@ export function App(props: {
         setWaitingG(false);
         setMode("normal");
       });
+      if (chatting() && field) {
+        const settled = settleEdit(editor, lineOf(field));
+        editor = settled.editor;
+        showLine(field, settled.line, false);
+      }
     },
     insert: (select: boolean, later?: boolean) => {
       if (later) {
@@ -1342,6 +1364,37 @@ export function App(props: {
         handPicked = true;
         select(last ? results().length - 1 : 0);
       }
+    },
+    edit: (event: Keystroke) => {
+      if (!chatting() || !field) {
+        return false;
+      }
+      const pending = editor.keys.length > 0;
+      if (event.keyCode === COMPOSING || event.key === "Dead") {
+        editor = { ...editor, keys: [] };
+        return pending;
+      }
+      const usable = event.metaKey !== true && event.ctrlKey !== true;
+      const token = usable ? tokenOf(editor.keys, event) : undefined;
+      if (token === undefined) {
+        editor = { ...editor, keys: [] };
+        return pending && event.metaKey !== true;
+      }
+      const done = pressEdit(editor, lineOf(field), token);
+      if (done === "skip") {
+        editor = { ...editor, keys: [] };
+        return false;
+      }
+      editor = done.editor;
+      if (done.line.text !== field.value) {
+        field.value = done.line.text;
+        fieldChanged();
+      }
+      if (done.insert) {
+        enterInsert();
+      }
+      showLine(field, done.line, done.insert);
+      return true;
     },
     tab: (step: 1 | -1) => {
       if (!pulls.loaded() || pulls.gate() !== null) {
@@ -1383,7 +1436,37 @@ export function App(props: {
     }
   };
 
+  const lineOf = (input: HTMLInputElement): Line => ({
+    text: input.value,
+    at: input.selectionStart ?? input.value.length,
+  });
+  const measure = document.createElement("canvas").getContext("2d");
+  const widthOf = (input: HTMLInputElement, text: string) => {
+    if (!measure) {
+      return 0;
+    }
+    const style = getComputedStyle(input);
+    measure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    return measure.measureText(text).width;
+  };
+  const showLine = (input: HTMLInputElement, line: Line, typing: boolean) => {
+    input.focus();
+    const [from, to] = typing ? [line.at, line.at] : blockOf(line);
+    input.setSelectionRange(from, to);
+    const style = getComputedStyle(input);
+    const inset = parseFloat(style.paddingLeft) || 0;
+    const start = widthOf(input, line.text.slice(0, from)) + inset;
+    const end = widthOf(input, line.text.slice(0, to)) + inset;
+    const room = input.clientWidth - inset - (parseFloat(style.paddingRight) || 0);
+    if (start - inset < input.scrollLeft) {
+      input.scrollLeft = start - inset;
+    } else if (end - inset > input.scrollLeft + room) {
+      input.scrollLeft = end - inset - room;
+    }
+  };
+
   const enterInsert = () => {
+    editor = { ...editor, keys: [] };
     batch(() => {
       setWaitingG(false);
       setMode("insert");
@@ -1418,7 +1501,12 @@ export function App(props: {
     }
     if (answering()) {
       const phase = asking.phase();
-      return phase !== null && phase !== "waiting" && phase !== "signin" && phase !== "signing";
+      return (
+        (phase !== null && phase !== "waiting" && phase !== "signin" && phase !== "signing") ||
+        query() !== "" ||
+        (editor.opened !== undefined && editor.opened.text !== query()) ||
+        editor.undo.length > 0
+      );
     }
     return results().length > 0 && nothingFound() === "";
   };
@@ -1434,7 +1522,15 @@ export function App(props: {
             ? "answer"
             : "search";
 
-  createEffect(on([screen, vimOn], () => enterInsert(), { defer: true }));
+  createEffect(
+    on(
+      [screen, vimOn],
+      () => {
+        enterInsert();
+      },
+      { defer: true },
+    ),
+  );
   createEffect(
     on(
       normal,
@@ -1487,7 +1583,11 @@ export function App(props: {
     if (!event.repeat) {
       held = stepsBack(event, now) || switchesToInsert(event, now) ? event.key : "";
     }
-    if (handleKey(event, now, actions)) {
+    const handled = handleKey(event, now, actions);
+    if (!event.repeat && now.normal && !normal() && !event.metaKey) {
+      held = event.key;
+    }
+    if (handled) {
       event.preventDefault();
       if (now.normal && !now.menu) {
         void props.call("keystroke", { ms: performance.now() - event.timeStamp });
@@ -1744,6 +1844,11 @@ export function App(props: {
                 ? "Ask a follow-up"
                 : "Search"
       }
+      onBeforeInput={() => {
+        if (chatting() && field && editor.opened === undefined) {
+          editor = { ...editor, opened: lineOf(field) };
+        }
+      }}
       onInput={onInput}
     />
   ) as HTMLInputElement;

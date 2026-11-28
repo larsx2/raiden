@@ -22,6 +22,7 @@ const actions = () => ({
   line: vi.fn(),
   edge: vi.fn(),
   tab: vi.fn(),
+  edit: vi.fn(() => false),
 });
 
 type Actions = ReturnType<typeof actions>;
@@ -32,6 +33,7 @@ const normal = (view: Partial<PanelView> = {}): PanelView => insert({ normal: tr
 
 const called = (a: Actions) =>
   Object.entries(a)
+    .filter(([name]) => name !== "edit")
     .flatMap(([name, mock]) =>
       mock.mock.calls.map((args, at) => ({
         order: mock.mock.invocationCallOrder[at] ?? 0,
@@ -283,5 +285,32 @@ describe("Pull Requests tabs", () => {
     expect(tabAfter("drafts", 1)).toBe("drafts");
     expect(tabAfter("all", -1)).toBe("all");
     expect(tabAfter("ready", -1)).toBe("failing");
+  });
+});
+
+describe("editing the question in Ask AI", () => {
+  it("hands Normal keys to the question first, only in Ask AI and never after g", () => {
+    const a = actions();
+    a.edit.mockReturnValue(true);
+    expect(handleKey({ key: "x" }, normal({ answer: true }), a)).toBe(true);
+    expect(a.edit).toHaveBeenCalledTimes(1);
+    handleKey({ key: "x" }, normal(), a);
+    handleKey({ key: "x" }, insert({ answer: true }), a);
+    handleKey({ key: "x" }, normal({ answer: true, waiting: true }), a);
+    handleKey({ key: "x", metaKey: true }, normal({ answer: true, menu: true }), a);
+    expect(a.edit).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands keys typed through an input method to the question too, so it can drop a waiting f", () => {
+    const a = actions();
+    handleKey({ key: "Process", keyCode: 229 }, normal({ answer: true }), a);
+    expect(a.edit).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a key the question turns down to Normal's own keys", () => {
+    const a = actions();
+    expect(handleKey({ key: "j" }, normal({ answer: true }), a)).toBe(true);
+    expect(a.edit).toHaveBeenCalledTimes(1);
+    expect(a.line).toHaveBeenCalledWith(1);
   });
 });
