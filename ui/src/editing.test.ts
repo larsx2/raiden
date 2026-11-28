@@ -175,6 +175,7 @@ describe("keys left for the screen", () => {
     expect(tokenOf([], { key: "Enter" })).toBeUndefined();
     expect(tokenOf([], { key: "ArrowLeft" })).toBe("h");
     expect(tokenOf([], { key: "End" })).toBe("$");
+    expect(tokenOf([], { key: ",", code: "KeyM" })).toBe(",");
     expect(tokenOf([], { key: "$", code: "Digit4", altKey: true })).toBe("$");
     expect(tokenOf([], { key: "∂", code: "KeyD", altKey: true })).toBeUndefined();
     expect(tokenOf(["r"], { key: "@", code: "Digit2", altKey: true })).toBe("@");

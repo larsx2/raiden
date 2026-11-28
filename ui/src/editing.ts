@@ -345,7 +345,8 @@ export function tokenOf(keys: string[], event: Keystroke): string | undefined {
   if (event.key === "Home" && /^[0-9]$/.test(keys.at(-1) ?? "")) {
     return undefined;
   }
-  const letter = KEYS[event.key] ?? vimLetter(event);
+  const typed = [...event.key].length === 1 && !/\p{L}/u.test(event.key) ? event.key : undefined;
+  const letter = KEYS[event.key] ?? typed ?? vimLetter(event);
   return [...letter].length === 1 ? letter : undefined;
 }
 
