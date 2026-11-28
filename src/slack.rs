@@ -393,7 +393,10 @@ fn ensure_catalog(inner: &Arc<Inner>, token: &str) -> Result<(), Problem> {
             }
             let refreshing = inner.clone();
             let token = token.to_owned();
+            // The open list asks again until this refresh and its unread lookups land.
+            let busy = Filling::start(inner);
             std::thread::spawn(move || {
+                let _busy = busy;
                 if let Ok(_fetching) = refreshing.fetching.try_lock() {
                     let _ = refresh(&refreshing, &token);
                 }
@@ -463,6 +466,23 @@ fn refresh(inner: &Arc<Inner>, token: &str) -> Result<(), Problem> {
     Ok(())
 }
 
+// Counts work behind the list while alive, so searches report `updating`; dropping it, even in
+// a panic, ends that.
+struct Filling(Arc<Inner>);
+
+impl Filling {
+    fn start(inner: &Arc<Inner>) -> Self {
+        inner.filling.fetch_add(1, Ordering::SeqCst);
+        Self(inner.clone())
+    }
+}
+
+impl Drop for Filling {
+    fn drop(&mut self) {
+        self.0.filling.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 // A new catalog starts with the old one's DM unreads and times, so a refresh does not blank
 // them while `fill_unreads` looks them up again.
 fn keep_dm_state(catalog: &mut Catalog, kept: &Catalog) {
@@ -487,10 +507,10 @@ fn keep_dm_state(catalog: &mut Catalog, kept: &Catalog) {
 fn fill_unreads(inner: &Arc<Inner>, token: &str, account: u64) {
     let inner = inner.clone();
     let token = token.to_owned();
-    inner.filling.fetch_add(1, Ordering::SeqCst);
+    let busy = Filling::start(&inner);
     std::thread::spawn(move || {
+        let _busy = busy;
         fill(&inner, &token, account);
-        inner.filling.fetch_sub(1, Ordering::SeqCst);
     });
 }
 
@@ -503,7 +523,18 @@ fn fill(inner: &Inner, token: &str, account: u64) {
         }
     };
     let ids: Vec<String> = dms.iter().map(|dm| dm.id.clone()).collect();
-    let dms = slack::with_dm_state(dms, &dm_state(token, &ids));
+    let replies = dm_state(token, &ids);
+    // Only DMs whose lookup answered are written, so a failed one keeps its kept count.
+    let answered: Vec<String> = replies
+        .iter()
+        .filter(|reply| reply.get("ok").and_then(Value::as_bool) == Some(true))
+        .filter_map(|reply| reply.pointer("/channel/id").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    let dms: Vec<Hit> = slack::with_dm_state(dms, &replies)
+        .into_iter()
+        .filter(|dm| answered.contains(&dm.id))
+        .collect();
     let mut guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
     let Some(catalog) = guard
         .as_mut()
