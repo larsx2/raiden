@@ -61,6 +61,7 @@ import {
 } from "./list";
 import { plainOf } from "./markdown";
 import { calculate } from "./calculator";
+import { convert, type Rates } from "./convert";
 import { AiIcon, Brand, Check, GitHubMark, Glyph, Keys, MenuIcon, NoMatch } from "./parts";
 import {
   ORGS_KEYS,
@@ -126,7 +127,7 @@ type Extra =
   | { kind: "file"; file: FileRow }
   | { kind: "answer"; conversation: Conversation }
   | { kind: "ask"; question: string }
-  | { kind: "math"; expression: string; value: string };
+  | { kind: "math"; expression: string; value: string; title: string; section: string };
 
 const COMMAND = "raiden:";
 const GRAMMAR = "raiden:fix-grammar";
@@ -326,9 +327,7 @@ export function App(props: {
         const found = foundAnswers(text);
         const shownFiles = files();
         const asked = text.trim();
-        const value = calculate(asked);
-        const math: Extra[] =
-          value === undefined ? [] : [{ kind: "math", expression: asked, value }];
+        const math = mathOf(asked);
         const more: Extra[] = [
           ...shownFiles.map((file): Extra => ({ kind: "file", file })),
           ...found.map((conversation): Extra => ({ kind: "answer", conversation })),
@@ -346,7 +345,7 @@ export function App(props: {
         setResults(rows);
         setSections(
           sectionsOf([
-            ["Calculator", math.length],
+            [math[0]?.kind === "math" ? math[0].section : "", math.length],
             ["Results", ranked.length],
             ["Files", shownFiles.length],
             ["Recent answers", found.length],
@@ -442,6 +441,49 @@ export function App(props: {
     props
       .call<FileAnswer | null>("files", { query: wanted, asked })
       .then(settle, () => settle(null));
+  };
+
+  const [rates, setRates] = createSignal<Rates>({});
+  const loadRates = () =>
+    void props.call<Rates | null>("currency_rates").then(
+      (found) => {
+        if (
+          found &&
+          Object.keys(found).length > 0 &&
+          JSON.stringify(found) !== JSON.stringify(rates())
+        ) {
+          setRates(found);
+          if (!typedText()) {
+            return;
+          }
+          if (covered() || answering()) {
+            rowsOutdated = true;
+          } else {
+            build(false);
+            select(selected());
+          }
+        }
+      },
+      () => undefined,
+    );
+
+  const mathOf = (asked: string): Extra[] => {
+    const value = calculate(asked);
+    if (value !== undefined) {
+      return [{ kind: "math", expression: asked, value, title: value, section: "Calculator" }];
+    }
+    const converted = convert(asked, rates());
+    return converted
+      ? [
+          {
+            kind: "math",
+            expression: asked,
+            value: converted.value,
+            title: converted.to,
+            section: "Conversion",
+          },
+        ]
+      : [];
   };
 
   const refresh = () => {
@@ -889,7 +931,7 @@ export function App(props: {
       : extra.kind === "answer"
         ? titleOf(extra.conversation)
         : extra.kind === "math"
-          ? extra.value
+          ? extra.title
           : "Ask AI";
 
   const fileAt = (row: number) => {
@@ -1643,6 +1685,7 @@ export function App(props: {
     startEarly();
     takeTypedAhead();
     readVim();
+    loadRates();
     afterNextPaint(
       () => {
         void props.call("shown");
@@ -1685,6 +1728,7 @@ export function App(props: {
     document.addEventListener("keydown", onKeyDown);
     window.addEventListener("focus", onFocus);
     field?.focus();
+    loadRates();
     void props
       .listen((event) => asking.receive(event))
       .then((stop) => {
@@ -2307,7 +2351,14 @@ export function App(props: {
               </Show>
             </Match>
             <Match when={fileAt(selected())}>Files</Match>
-            <Match when={extraAt(selected())?.kind === "math"}>Calculator</Match>
+            <Match
+              when={(() => {
+                const extra = extraAt(selected());
+                return extra?.kind === "math" ? extra.section : undefined;
+              })()}
+            >
+              {(section) => <>{section()}</>}
+            </Match>
             <Match when={extraAt(selected()) || isAiCommand(appAt(selected()))}>
               <AiIcon />
               AI

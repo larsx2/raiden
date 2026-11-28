@@ -15,6 +15,7 @@ mod memory;
 mod paste;
 mod picks;
 mod pulls;
+mod rates;
 mod settings;
 mod sizes;
 mod spotlight;
@@ -476,6 +477,7 @@ fn launch(rows: Option<usize>, development: bool) {
             pulls::pull_requests_avatar,
             pulls::pull_requests_pin,
             pulls::pull_requests_context,
+            rates::currency_rates,
             sizes::window_size,
             sizes::expand_window
         ])
