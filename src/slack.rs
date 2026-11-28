@@ -31,7 +31,6 @@ const PAGE: usize = 200;
 const CONVERSATION_PAGE: usize = 999;
 // ponytail: a backstop against a cursor that never ends, far past any real workspace.
 const PAGES: usize = 1000;
-// A rate-limited page is retried after Slack's minute this many times before giving up.
 // ponytail: at most this long waiting out rate limits in one catalog fetch; past it the fetch
 // fails as limited and the 30s backoff takes over.
 const LIMITED_WAIT: u64 = 180;
@@ -48,6 +47,11 @@ struct Inner {
     // Held while one catalog fetch runs, so a burst of cold searches does not
     // each start their own refresh.
     fetching: Mutex<()>,
+    // Held while one Keychain read runs, so searches typed during a prompt share it instead of
+    // each asking again. Sign-out never takes it.
+    reading: Mutex<()>,
+    // True while DM unread counts are being looked up behind the list, so the view asks again.
+    filling: std::sync::atomic::AtomicUsize,
     // When the last catalog fetch failed, for which token and why, for the backoff above.
     failed: Mutex<Option<(u64, String, Problem)>>,
     // Held while a sign-in writes the token and a sign-out clears it, so the
@@ -101,6 +105,10 @@ impl Inner {
         // The Keychain may wait on a prompt for as long as the person takes, so it is read
         // outside the lock a sign-out holds. A sign-out bumps the account before and after it
         // deletes, so a read that overlapped one is dropped instead of cached.
+        let _reading = self.reading.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(token) = self.token.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            return Some(token);
+        }
         let account = self.account.load(Ordering::SeqCst);
         let read = token();
         let _change = self
@@ -112,8 +120,18 @@ impl Inner {
         if guard.is_some() || self.account.load(Ordering::SeqCst) != account {
             return guard.clone();
         }
-        *guard = read.clone();
-        read
+        let token = match read? {
+            Stored::Current(token) => token,
+            // The move writes the Keychain, so it runs here, under the lock a sign-out holds
+            // and after the account check: a sign-out during the read is never undone.
+            Stored::Legacy(token) => {
+                store_token(&token).ok()?;
+                forget_legacy_token();
+                token
+            }
+        };
+        *guard = Some(token.clone());
+        Some(token)
     }
 }
 
@@ -124,6 +142,9 @@ pub struct SlackView {
     hits: Vec<Hit>,
     #[serde(skip_serializing_if = "Option::is_none")]
     problem: Option<Problem>,
+    // Unread counts are still arriving, so the view should ask again shortly.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    updating: bool,
 }
 
 impl SlackView {
@@ -132,6 +153,7 @@ impl SlackView {
             has_token: false,
             hits: Vec::new(),
             problem: Some(Problem::no_token()),
+            updating: false,
         }
     }
 
@@ -141,6 +163,7 @@ impl SlackView {
             has_token: true,
             hits: Vec::new(),
             problem: Some(problem),
+            updating: false,
         }
     }
 
@@ -150,6 +173,7 @@ impl SlackView {
             has_token: false,
             hits: Vec::new(),
             problem: Some(problem),
+            updating: false,
         }
     }
 }
@@ -244,6 +268,9 @@ const SLACK_APP_ID: &str = "com.tinyspeck.slackmacgap";
 fn save_token(inner: &Arc<Inner>, token: &str) -> SlackView {
     if !valid_token(token) {
         return SlackView::blocked(Problem::signed_out());
+    }
+    if token.starts_with("xoxb-") {
+        return SlackView::blocked(Problem::not_a_user_token());
     }
     let account = inner.account.fetch_add(1, Ordering::SeqCst) + 1;
     let catalog = match fetch_catalog(token) {
@@ -343,6 +370,7 @@ fn search(inner: &Arc<Inner>, query: &str) -> SlackView {
     SlackView {
         has_token: true,
         hits,
+        updating: needle.is_empty() && inner.filling.load(Ordering::SeqCst) > 0,
         problem,
     }
 }
@@ -424,6 +452,10 @@ fn refresh(inner: &Arc<Inner>, token: &str) -> Result<(), Problem> {
     if inner.account.load(Ordering::SeqCst) == account {
         let mut guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
         if guard.as_ref().is_none_or(|kept| kept.token == token) {
+            let mut catalog = catalog;
+            if let Some(kept) = guard.as_ref() {
+                keep_dm_state(&mut catalog, kept);
+            }
             *guard = Some(catalog);
         }
     }
@@ -431,38 +463,63 @@ fn refresh(inner: &Arc<Inner>, token: &str) -> Result<(), Problem> {
     Ok(())
 }
 
+// A new catalog starts with the old one's DM unreads and times, so a refresh does not blank
+// them while `fill_unreads` looks them up again.
+fn keep_dm_state(catalog: &mut Catalog, kept: &Catalog) {
+    let old: HashMap<&str, &Hit> = kept
+        .entries
+        .iter()
+        .map(|entry| (entry.hit.link.as_str(), &entry.hit))
+        .collect();
+    for dm in &catalog.dms {
+        if let (Some(old), Some(entry)) = (
+            old.get(dm.link.as_str()),
+            catalog.entries.iter_mut().find(|e| e.hit.link == dm.link),
+        ) {
+            entry.hit.unread = old.unread;
+            entry.hit.updated = entry.hit.updated.max(old.updated);
+        }
+    }
+}
+
 // Looks up the DMs' unread counts behind an installed catalog, so the list never waits on
 // those calls, then copies them onto the rows, unless the account or catalog changed meanwhile.
 fn fill_unreads(inner: &Arc<Inner>, token: &str, account: u64) {
     let inner = inner.clone();
     let token = token.to_owned();
+    inner.filling.fetch_add(1, Ordering::SeqCst);
     std::thread::spawn(move || {
-        let (fetched, dms) = {
-            let guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
-            match guard.as_ref().filter(|catalog| catalog.token == token) {
-                Some(catalog) => (catalog.fetched, catalog.dms.clone()),
-                None => return,
-            }
-        };
-        let ids: Vec<String> = dms.iter().map(|dm| dm.id.clone()).collect();
-        let dms = slack::with_dm_state(dms, &dm_state(&token, &ids));
-        let mut guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(catalog) = guard
-            .as_mut()
-            .filter(|catalog| catalog.token == token && catalog.fetched == fetched)
-        else {
-            return;
-        };
-        if inner.account.load(Ordering::SeqCst) != account {
-            return;
-        }
-        for dm in dms {
-            if let Some(entry) = catalog.entries.iter_mut().find(|e| e.hit.link == dm.link) {
-                entry.hit.unread = dm.unread;
-                entry.hit.updated = entry.hit.updated.max(dm.updated);
-            }
-        }
+        fill(&inner, &token, account);
+        inner.filling.fetch_sub(1, Ordering::SeqCst);
     });
+}
+
+fn fill(inner: &Inner, token: &str, account: u64) {
+    let (fetched, dms) = {
+        let guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref().filter(|catalog| catalog.token == token) {
+            Some(catalog) => (catalog.fetched, catalog.dms.clone()),
+            None => return,
+        }
+    };
+    let ids: Vec<String> = dms.iter().map(|dm| dm.id.clone()).collect();
+    let dms = slack::with_dm_state(dms, &dm_state(token, &ids));
+    let mut guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(catalog) = guard
+        .as_mut()
+        .filter(|catalog| catalog.token == token && catalog.fetched == fetched)
+    else {
+        return;
+    };
+    if inner.account.load(Ordering::SeqCst) != account {
+        return;
+    }
+    for dm in dms {
+        if let Some(entry) = catalog.entries.iter_mut().find(|e| e.hit.link == dm.link) {
+            entry.hit.unread = dm.unread;
+            entry.hit.updated = entry.hit.updated.max(dm.updated);
+        }
+    }
 }
 
 fn fetch_catalog(token: &str) -> Result<Catalog, Problem> {
@@ -474,7 +531,9 @@ fn fetch_catalog(token: &str) -> Result<Catalog, Problem> {
         .unwrap_or_default()
         .to_owned();
 
-    let members = collect(token, "users.list", PAGE, "", "members")?;
+    // One rate-limit budget for the whole fetch, not one per list.
+    let mut waited = 0;
+    let members = collect(token, "users.list", PAGE, "", "members", &mut waited)?;
     let people = slack::people(&json!({ "members": members }), &team);
     let names = Names::from_people(&people);
 
@@ -484,6 +543,7 @@ fn fetch_catalog(token: &str) -> Result<Catalog, Problem> {
         CONVERSATION_PAGE,
         "exclude_archived=true&types=public_channel,private_channel,mpim,im",
         "channels",
+        &mut waited,
     )?;
     let conversations = slack::conversations(&json!({ "channels": channels }), &team, &names);
     // ponytail: recency is when you last wrote somewhere, from your 100 latest messages; a DM you
@@ -585,10 +645,10 @@ fn collect(
     limit: usize,
     params: &str,
     key: &str,
+    waited: &mut u64,
 ) -> Result<Vec<Value>, Problem> {
     let mut items = Vec::new();
     let mut cursor: Option<String> = None;
-    let mut waited = 0;
     for _ in 0..PAGES {
         let mut url = format!("{}/{endpoint}?limit={limit}", slack::API);
         if !params.is_empty() {
@@ -598,7 +658,7 @@ fn collect(
         if let Some(cursor) = &cursor {
             url.push_str(&format!("&cursor={}", encode(cursor)));
         }
-        let page = page_through_limits(token, &url, &mut waited)?;
+        let page = page_through_limits(token, &url, waited)?;
         if let Some(array) = page.get(key).and_then(Value::as_array) {
             items.extend(array.iter().cloned());
         }
@@ -616,19 +676,21 @@ fn collect(
 
 // A big workspace runs into Slack's per-minute limit while paging; waiting it out and going on
 // keeps every later page instead of failing the whole catalog.
+// How long to wait before retrying a limited call: all of what Slack asked for, or nothing
+// when that would pass the fetch's budget. Retrying sooner only gets limited again.
+fn limit_wait(retry_at: Option<u64>, now: u64, waited: u64) -> Option<u64> {
+    let wait = retry_at.unwrap_or(0).saturating_sub(now).max(1);
+    (waited + wait <= LIMITED_WAIT).then_some(wait)
+}
+
 fn page_through_limits(token: &str, url: &str, waited: &mut u64) -> Result<Value, Problem> {
     loop {
         let page = get(token, url).and_then(|page| slack::check(&page, now()).map(|()| page));
         match page {
             Err(problem) if problem.kind == slack::ProblemKind::Limited => {
-                let wait = problem
-                    .retry_at
-                    .unwrap_or(0)
-                    .saturating_sub(now())
-                    .clamp(1, 60);
-                if *waited + wait > LIMITED_WAIT {
+                let Some(wait) = limit_wait(problem.retry_at, now(), *waited) else {
                     return Err(problem);
-                }
+                };
                 *waited += wait;
                 sleep(Duration::from_secs(wait));
             }
@@ -715,28 +777,29 @@ const KEYCHAIN_SERVICE: &str = if cfg!(debug_assertions) {
 // errSecItemNotFound.
 const NOT_FOUND: i32 = -25300;
 
-fn token() -> Option<String> {
-    let token = match passwords::get_generic_password(KEYCHAIN_SERVICE, slack::KEYCHAIN_ACCOUNT) {
+enum Stored {
+    Current(String),
+    // Stored by an earlier Raiden through `/usr/bin/security`, which any program could read
+    // through that tool; the caller moves it into Raiden's own item.
+    Legacy(String),
+}
+
+// Only reads: the one write, moving a legacy token, is left to the caller.
+fn token() -> Option<Stored> {
+    match passwords::get_generic_password(KEYCHAIN_SERVICE, slack::KEYCHAIN_ACCOUNT) {
         Ok(bytes) => {
             // An old item whose delete failed when it was moved is retried each launch.
             if !cfg!(debug_assertions) {
                 forget_legacy_token();
             }
-            String::from_utf8(bytes).ok()?
+            let token = String::from_utf8(bytes).ok()?;
+            valid_token(&token).then_some(Stored::Current(token))
         }
-        Err(error) if error.code() == NOT_FOUND && !cfg!(debug_assertions) => moved_token()?,
-        Err(_) => return None,
-    };
-    valid_token(&token).then_some(token)
-}
-
-// Moves a token an earlier Raiden stored through `/usr/bin/security`, which any program could
-// read through that tool, into Raiden's own item, then removes the old one.
-fn moved_token() -> Option<String> {
-    let token = legacy_token()?;
-    store_token(&token).ok()?;
-    forget_legacy_token();
-    Some(token)
+        Err(error) if error.code() == NOT_FOUND && !cfg!(debug_assertions) => {
+            legacy_token().map(Stored::Legacy)
+        }
+        Err(_) => None,
+    }
 }
 
 fn legacy_token() -> Option<String> {
@@ -982,6 +1045,32 @@ mod tests {
             updated: 0,
             link: link.to_owned(),
         }
+    }
+
+    #[test]
+    fn a_rate_limit_waits_all_slack_asked_for_or_not_at_all() {
+        assert_eq!(limit_wait(Some(1_120), 1_000, 0), Some(120));
+        assert_eq!(limit_wait(Some(1_000), 1_000, 0), Some(1));
+        assert_eq!(limit_wait(Some(1_120), 1_000, LIMITED_WAIT - 60), None);
+        assert_eq!(limit_wait(None, 1_000, LIMITED_WAIT), None);
+    }
+
+    #[test]
+    fn a_refresh_keeps_dm_unreads_until_they_are_looked_up_again() {
+        let dm = hit("slack://user?team=T&id=U1", "Ana", 0, true);
+        let fresh = |unread| Catalog {
+            fetched: 0,
+            token: String::new(),
+            entries: entries(
+                vec![hit("slack://user?team=T&id=U1", "Ana", unread, true)],
+                vec![],
+            ),
+            dms: vec![dm.clone()],
+        };
+        let kept = fresh(5);
+        let mut catalog = fresh(0);
+        keep_dm_state(&mut catalog, &kept);
+        assert_eq!(catalog.entries[0].hit.unread, 5);
     }
 
     #[test]

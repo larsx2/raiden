@@ -67,4 +67,28 @@ describe("createSlack", () => {
       dispose();
     }).finally(() => vi.useRealTimers());
   });
+
+  test("the list asks again while unread counts are still arriving, then stops", async () => {
+    vi.useFakeTimers();
+    let asked = 0;
+    const call = async <T>(command: string) => {
+      if (command === "slack_search") {
+        asked++;
+      }
+      const view: SlackView = {
+        hasToken: true,
+        hits: [hit({ unread: asked })],
+        updating: asked < 3,
+      };
+      return view as T;
+    };
+    await createRoot(async (dispose) => {
+      const slack = createSlack({ call });
+      void slack.show();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(asked).toBe(3);
+      expect(slack.shown()[0]?.unread).toBe(3);
+      dispose();
+    }).finally(() => vi.useRealTimers());
+  });
 });

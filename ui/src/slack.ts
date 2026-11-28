@@ -15,7 +15,7 @@ export type Hit = {
 };
 export type ProblemKind = "noToken" | "signedOut" | "offline" | "limited" | "failed";
 export type Problem = { kind: ProblemKind; text: string; retryAt?: number };
-export type SlackView = { hasToken: boolean; hits: Hit[]; problem?: Problem };
+export type SlackView = { hasToken: boolean; hits: Hit[]; problem?: Problem; updating?: boolean };
 
 type Call = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
@@ -27,6 +27,8 @@ export const OPEN_KEYS = "↵";
 export const COPY_LINK_KEYS = "⌘ ⇧ C";
 export const SIGN_OUT_KEYS = "⌘ ⌫";
 export const SEARCH_WAIT = 180;
+// While unread counts are still arriving behind the list, it asks again this often.
+export const UPDATE_WAIT = 1500;
 export const STEPS = [
   "Open Slack’s app builder and choose From a manifest.",
   "Pick your workspace, paste Raiden’s manifest, and create the app.",
@@ -107,6 +109,9 @@ export function createSlack(options: { call: Call }) {
           return;
         }
         take(view, mine);
+        if (view.updating) {
+          setTimeout(() => current() && run(text, mine, query), UPDATE_WAIT);
+        }
         if (answered !== query) {
           // A new list starts at its top row, not where the old one was left.
           setSelected(0);
