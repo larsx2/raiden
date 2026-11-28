@@ -80,6 +80,9 @@ describe("changing the question", () => {
     expect(shown(type(QUESTION, 0, "dfe"))).toBe("|base onto main?");
     expect(shown(type(QUESTION, 0, "dte"))).toBe("|ebase onto main?");
     expect(shown(type(QUESTION, 12, "dd"))).toBe("|");
+    expect(shown(type(QUESTION, 12, "dgg"))).toBe("|");
+    expect(shown(type(QUESTION, 12, "dG"))).toBe("|");
+    expect(shown(type(QUESTION, 12, "dgxx"))).toBe(`how do I reb|se onto main?`);
   });
 
   it("c changes over a motion and starts typing, and cw stops at the word's end", () => {

@@ -302,8 +302,14 @@ function parse(keys: string[]): Parsed | "pending" | "invalid" {
     if (motion === undefined) {
       return "pending";
     }
-    if (motion === head) {
+    if (motion === head || motion === "G") {
       return { count, command: "line", operator: head };
+    }
+    if (motion === "g") {
+      if (char === undefined) {
+        return "pending";
+      }
+      return char === "g" ? { count, command: "line", operator: head } : "invalid";
     }
     if (OBJECTS.has(motion)) {
       if (char === undefined) {
