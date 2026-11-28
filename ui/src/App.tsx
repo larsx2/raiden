@@ -1927,7 +1927,8 @@ export function App(props: {
     <input
       ref={(element) => (field = element)}
       id="q"
-      type="text"
+      // A pasted Slack token stays hidden from anyone watching the screen.
+      type={slk.open() && slk.gate() ? "password" : "text"}
       aria-describedby={!answering() && !covered() ? "hint" : undefined}
       placeholder={
         clip.open()

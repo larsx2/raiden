@@ -12,11 +12,7 @@
         "groups:read",
         "im:read",
         "mpim:read",
-        "search:read",
-        "channels:history",
-        "groups:history",
-        "im:history",
-        "mpim:history"
+        "search:read"
       ]
     }
   },

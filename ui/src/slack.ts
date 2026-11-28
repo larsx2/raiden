@@ -71,6 +71,10 @@ export function createSlack(options: { call: Call }) {
   const [busy, setBusy] = createSignal(false);
   let opened = 0;
   let queried = 0;
+  // The hits on screen answer an older query until the newest reply lands, so ↵ waits for it
+  // instead of opening the old top row, which may be someone else's DM.
+  let answered = 0;
+  let openWhenAnswered = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const shown = createMemo(() => hits());
@@ -97,12 +101,31 @@ export function createSlack(options: { call: Call }) {
     call<SlackView>("slack_search", { query: text })
       // Only the newest query wins, so a slow reply cannot replace newer hits
       // or raise a notice after a later query has already answered.
-      .then((view) => current() && take(view, mine))
-      .catch((error: unknown) => current() && setNotice(problemOf(error)));
+      .then((view) => {
+        if (!current()) {
+          return;
+        }
+        take(view, mine);
+        answered = query;
+        if (openWhenAnswered) {
+          openWhenAnswered = false;
+          openHit();
+        }
+      })
+      .catch((error: unknown) => {
+        if (current()) {
+          openWhenAnswered = false;
+          batch(() => {
+            setNotice(problemOf(error));
+            setLoaded(true);
+          });
+        }
+      });
   };
 
   const show = async () => {
     const mine = ++opened;
+    openWhenAnswered = false;
     batch(() => {
       setOpen(true);
       setLoaded(false);
@@ -118,6 +141,7 @@ export function createSlack(options: { call: Call }) {
 
   const hide = () => {
     opened++;
+    openWhenAnswered = false;
     clearTimeout(timer);
     batch(() => {
       setOpen(false);
@@ -172,6 +196,7 @@ export function createSlack(options: { call: Call }) {
         take(view, mine);
         batch(() => {
           if (view.hasToken && !view.problem) {
+            answered = queried;
             setNotice("");
             setQuery("");
           } else {
@@ -184,6 +209,10 @@ export function createSlack(options: { call: Call }) {
   };
 
   const openHit = () => {
+    if (answered !== queried) {
+      openWhenAnswered = true;
+      return;
+    }
     const hit = selectedHit();
     if (!hit) {
       return;
@@ -195,7 +224,7 @@ export function createSlack(options: { call: Call }) {
 
   const copyLink = () => {
     const hit = selectedHit();
-    if (!hit) {
+    if (!hit || answered !== queried) {
       return;
     }
     call("copy_text", { text: hit.link }).then(

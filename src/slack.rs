@@ -20,6 +20,9 @@ const CALL: Duration = Duration::from_secs(15);
 const KEYCHAIN: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(25);
 const CATALOG_FRESH: u64 = 300;
+// After a failed fetch, searches reuse its problem this long instead of fetching again on every
+// keystroke and keeping Slack's rate limit used up.
+const RETRY_AFTER: u64 = 30;
 const MESSAGES: usize = 20;
 const MOST: usize = 60;
 const PAGE: usize = 200;
@@ -34,6 +37,8 @@ struct Inner {
     // Held while one catalog fetch runs, so a burst of cold searches does not
     // each start their own refresh.
     fetching: Mutex<()>,
+    // When the last catalog fetch failed, for which token and why, for the backoff above.
+    failed: Mutex<Option<(u64, String, Problem)>>,
     // Held while a sign-in writes the token and a sign-out clears it, so the
     // two never interleave and leave the Keychain and memory disagreeing.
     account_change: Mutex<()>,
@@ -179,15 +184,23 @@ pub async fn slack_sign_out(state: State<'_, Slack>) -> Result<SlackView, ()> {
 pub async fn slack_open(app: AppHandle, url: String) -> Result<(), String> {
     let link = safe_slack_link(&url)?.to_owned();
     crate::hide_panel(&app);
+    // `open` can take seconds while Slack starts, so it runs here, off the main thread. It only
+    // ever hands the link to the Slack app, never to a browser.
+    if blocking({
+        let link = link.clone();
+        move || in_slack_app(&link)
+    })
+    .await
+    {
+        return Ok(());
+    }
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         // Re-check the host on the URL macOS actually parsed, so a fragment or
         // query that fooled the string check cannot reach a non-Slack site.
         let opened = NSURL::URLWithString(&NSString::from_str(&link))
             .filter(|parsed| is_slack_url(parsed))
-            .is_some_and(|parsed| {
-                in_slack_app(&link) || NSWorkspace::sharedWorkspace().openURL(&parsed)
-            });
+            .is_some_and(|parsed| NSWorkspace::sharedWorkspace().openURL(&parsed));
         let _ = sender.send(opened);
     })
     .map_err(|error| error.to_string())?;
@@ -328,6 +341,9 @@ fn ensure_catalog(inner: &Arc<Inner>, token: &str) -> Result<(), Problem> {
         // An old catalog still answers at once; a fresh one is fetched behind it, unless a fetch
         // is already running.
         Some(_) => {
+            if recent_failure(inner, token).is_some() {
+                return Ok(());
+            }
             let refreshing = inner.clone();
             let token = token.to_owned();
             std::thread::spawn(move || {
@@ -345,13 +361,45 @@ fn ensure_catalog(inner: &Arc<Inner>, token: &str) -> Result<(), Problem> {
     if age().is_some() {
         return Ok(());
     }
+    // The fetch this search waited on failed: answer with its problem rather than fetch again.
+    if let Some(problem) = recent_failure(inner, token) {
+        return Err(problem);
+    }
     refresh(inner, token)
+}
+
+fn recent_failure(inner: &Inner, token: &str) -> Option<Problem> {
+    let failed = inner.failed.lock().unwrap_or_else(|e| e.into_inner());
+    failed
+        .as_ref()
+        .filter(|(at, failed_for, _)| {
+            failed_for == token && now().saturating_sub(*at) < RETRY_AFTER
+        })
+        .map(|(_, _, problem)| problem.clone())
 }
 
 // Fetches the catalog and installs it; the caller holds `fetching`.
 fn refresh(inner: &Inner, token: &str) -> Result<(), Problem> {
     let account = inner.account.load(Ordering::SeqCst);
-    let catalog = fetch_catalog(token)?;
+    let fetched = fetch_catalog(token);
+    *inner.failed.lock().unwrap_or_else(|e| e.into_inner()) = fetched
+        .as_ref()
+        .err()
+        .map(|problem| (now(), token.to_owned(), problem.clone()));
+    let catalog = match fetched {
+        Ok(catalog) => catalog,
+        Err(problem) => {
+            // A revoked token must not keep serving the old workspace: drop its catalog so the
+            // next search says so.
+            if problem.kind == slack::ProblemKind::SignedOut {
+                let mut guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
+                if guard.as_ref().is_some_and(|kept| kept.token == token) {
+                    *guard = None;
+                }
+            }
+            return Err(problem);
+        }
+    };
     // Only install if the account has not changed and no newer catalog for a
     // different token has arrived, or it would show the old workspace.
     if inner.account.load(Ordering::SeqCst) == account {
@@ -753,6 +801,17 @@ mod tests {
             updated: 0,
             link: link.to_owned(),
         }
+    }
+
+    #[test]
+    fn a_failed_fetch_holds_off_retries_for_that_token_only() {
+        let inner = Inner::default();
+        *inner.failed.lock().unwrap() = Some((now(), "xoxp-a".to_owned(), Problem::offline()));
+        assert_eq!(recent_failure(&inner, "xoxp-a"), Some(Problem::offline()));
+        assert_eq!(recent_failure(&inner, "xoxp-b"), None);
+        *inner.failed.lock().unwrap() =
+            Some((now() - RETRY_AFTER, "xoxp-a".to_owned(), Problem::offline()));
+        assert_eq!(recent_failure(&inner, "xoxp-a"), None);
     }
 
     #[test]
