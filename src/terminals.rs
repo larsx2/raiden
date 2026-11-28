@@ -217,8 +217,8 @@ mod tests {
 
     #[test]
     fn only_what_file_search_showed_is_opened() {
-        let files = Files::start();
-        let home = std::env::var("HOME").unwrap_or_default();
+        let files = Files::start(std::sync::Arc::default());
+        let home = crate::names::real_home(&std::env::var("HOME").unwrap_or_default());
         for path in [home.as_str(), "/etc/passwd", "/tmp", "relative"] {
             assert!(
                 folder_found(&files, path)

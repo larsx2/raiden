@@ -12,6 +12,7 @@ mod hud;
 mod icons;
 mod login;
 mod memory;
+mod names;
 mod paste;
 mod picks;
 mod pulls;
@@ -406,7 +407,10 @@ fn launch(rows: Option<usize>, development: bool) {
         .manage(hud::Hud::default())
         .manage(answers::Answers::new(&folders(development).1))
         .manage(clipboard::History::new(&folders(development).1))
-        .manage(files::Files::start())
+        .manage(files::Files::start(names::start(
+            &std::env::var("HOME").unwrap_or_default(),
+            &folders(development).1,
+        )))
         .manage(pulls::Pulls::new(&folders(development).1))
         .manage(sizes::Sizes::new(&folders(development).1))
         .on_web_content_process_terminate(crashes::reload)

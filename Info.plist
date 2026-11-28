@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Raiden lists the names of files on your Desktop so it can find them as you type. It never reads what is inside them.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Raiden lists the names of files in Documents so it can find them as you type. It never reads what is inside them.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Raiden lists the names of files in Downloads so it can find them as you type. It never reads what is inside them.</string>
+</dict>
+</plist>

@@ -1,5 +1,8 @@
 use std::cmp::Ordering;
 
+use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::char::is_combining_mark;
+
 pub const SHORTEST: usize = 3;
 pub const SHOWN: usize = 8;
 pub const GATHERED: usize = 5000;
@@ -18,9 +21,11 @@ const PACKAGES: [&str; 12] = [
     "xcworkspace",
     "xpc",
 ];
-const NOISE: [&str; 6] = [
+const NOISE: [&str; 8] = [
     "node_modules",
     "__pycache__",
+    "site-packages",
+    "dist-packages",
     "Caches",
     "DerivedData",
     "Pods",
@@ -103,6 +108,37 @@ fn is_package(name: &str) -> bool {
 }
 
 /// ```
+/// use raiden_core::files::listed;
+/// assert!(listed("notes.md", false));
+/// assert!(!listed(".git", false));
+/// assert!(!listed("Library", true));
+/// assert!(listed("Library", false));
+/// ```
+pub fn listed(name: &str, at_home: bool) -> bool {
+    !name.is_empty() && !name.starts_with('.') && !(at_home && LEFT_OUT_AT_HOME.contains(&name))
+}
+
+/// ```
+/// use raiden_core::files::opened;
+/// assert!(opened("src"));
+/// assert!(!opened("node_modules"));
+/// assert!(!opened("site-packages"));
+/// assert!(!opened("Raiden.app"));
+/// assert!(!opened("Private.noindex"));
+/// ```
+pub fn opened(folder: &str) -> bool {
+    !NOISE.contains(&folder) && !is_package(folder) && !folder.ends_with(".noindex")
+}
+
+pub fn icloud_drive(home: &str) -> String {
+    format!(
+        "{}/{}",
+        home.trim_end_matches('/'),
+        ICLOUD_DRIVE.trim_end_matches('/')
+    )
+}
+
+/// ```
 /// use raiden_core::files::kept;
 /// assert!(kept("/Users/me/Code/lantern/AGENTS.md", "/Users/me"));
 /// assert!(!kept("/Users/me/Library/Caches/x.md", "/Users/me"));
@@ -128,9 +164,7 @@ pub fn kept(path: &str, home: &str) -> bool {
     parts
         .iter()
         .all(|part| !part.is_empty() && !part.starts_with('.') && *part != "..")
-        && folders
-            .iter()
-            .all(|folder| !NOISE.contains(folder) && !is_package(folder))
+        && folders.iter().all(|folder| opened(folder))
 }
 
 fn name_of(path: &str) -> &str {
@@ -179,18 +213,31 @@ fn starts_word(name: &str, at: usize) -> bool {
         .is_none_or(|before| !before.is_alphanumeric())
 }
 
-fn closeness(name: &str, query: &str) -> u8 {
-    let name = name.to_lowercase();
-    let query = query.trim().to_lowercase();
+/// ```
+/// assert_eq!(raiden_core::files::fold("Canción FINAL"), "cancion final");
+/// ```
+pub fn fold(text: &str) -> String {
+    text.to_lowercase()
+        .nfd()
+        .filter(|letter| !is_combining_mark(*letter))
+        .collect()
+}
+
+pub fn closeness(name: &str, query: &str) -> u8 {
+    closeness_of_folded(&fold(name), &fold(query))
+}
+
+pub fn closeness_of_folded(name: &str, query: &str) -> u8 {
+    let query = query.trim();
     if name == query {
         return 4;
     }
-    if name.starts_with(&query) {
+    if name.starts_with(query) {
         return 3;
     }
-    let all_words_start = words(&query).iter().all(|word| {
+    let all_words_start = words(query).iter().all(|word| {
         name.match_indices(word)
-            .any(|(at, _)| starts_word(&name, at))
+            .any(|(at, _)| starts_word(name, at))
     });
     if all_words_start { 2 } else { 1 }
 }
@@ -433,6 +480,13 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn accented_names_score_like_their_plain_spelling() {
+        assert_eq!(closeness("Résumé.pdf", "resume"), 3);
+        assert_eq!(closeness("résumé", "RESUME"), 4);
+        assert_eq!(closeness("İstanbul.pdf", "istanbul"), 3);
     }
 
     #[test]
