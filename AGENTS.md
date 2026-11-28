@@ -14,8 +14,10 @@ file adds how agents work here, whoever runs them.
 ## Before a pull request
 
 - Start a sub-agent that has not seen your work, and give it only the task and
-  `git diff origin/main...HEAD`. Fix what it finds, or say why not. If the code changes after the
-  review, have the new diff reviewed again.
+  `git diff origin/main...HEAD`. Fix the bugs it finds and anything `CONTRIBUTING.md` requires, or
+  say why not. Review again only if a fix or a later change rewrites how the code works, and then
+  once: fix what that review finds without another round. List minor findings in the pull
+  request's draft instead of fixing them one round at a time.
 - Commit every file, new ones included. No co-author lines.
 - Rebase on `main`: `git fetch origin main && git rebase origin/main`.
 
