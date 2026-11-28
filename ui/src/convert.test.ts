@@ -28,7 +28,22 @@ describe("convert", () => {
     expect(convert("1 Mile to Km")?.to).toBe("1.609344 km");
     expect(convert("1 KWh to J")?.to).toBe("3600000 J");
     expect(convert(`1 kg${" to".repeat(100)} lb`)).toBeUndefined();
-    for (const text of ["1 Gb to MB", "1 mPa to Pa", "1 Mg to kg", "1 nm to m"]) {
+    expect(convert("20 Mph to km/h")?.to).toBe("32.18688 km/h");
+    expect(convert("1 Min to s")?.to).toBe("60 s");
+    expect(convert("1 Bar to psi")?.to).toBe("14.503773773 psi");
+    expect(convert("1 ton to kg")?.to).toBe("907.18474 kg");
+    expect(convert("8 oz to ml")?.to).toBe("236.5882365 ml");
+    expect(convert("1013 mb to inhg")?.to).toBe("29.9138699069 inHg");
+    expect(convert("1 inhg to hpa")?.to).toBe("33.86389 hPa");
+    expect(convert("123456789012345678 g to kg")).toBeUndefined();
+    for (const text of [
+      "1 Gb to MB",
+      "1 Mm to km",
+      "1 Ms to s",
+      "1 mPa to Pa",
+      "1 Mg to kg",
+      "1 nm to m",
+    ]) {
       expect(convert(text)).toBeUndefined();
     }
   });

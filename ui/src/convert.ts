@@ -24,6 +24,7 @@ const UNITS: Record<string, [string, number, string[]][]> = {
     ["oz", 0.028349523125, ["ounce", "ounces"]],
     ["lb", 0.45359237, ["lbs", "pound", "pounds"]],
     ["st", 6.35029318, ["stone", "stones"]],
+    ["ton", 907.18474, ["tons", "short ton", "short tons"]],
   ],
   volume: [
     ["ml", 0.001, ["mL", "milliliter", "milliliters", "millilitre", "millilitres"]],
@@ -60,7 +61,8 @@ const UNITS: Record<string, [string, number, string[]][]> = {
     ["kPa", 1000, ["kilopascal", "kilopascals"]],
     ["MPa", 1e6, ["megapascal", "megapascals"]],
     ["bar", 1e5, ["bars"]],
-    ["mbar", 100, ["millibar", "millibars", "hPa", "hectopascal", "hectopascals"]],
+    ["mbar", 100, ["millibar", "millibars"]],
+    ["hPa", 100, ["hectopascal", "hectopascals"]],
     ["atm", 101325, ["atmosphere", "atmospheres"]],
     ["psi", 6894.757293168, []],
     ["mmHg", 133.322387415, ["torr"]],
@@ -144,17 +146,31 @@ for (const [symbol, factor, offset, names] of TEMPERATURES) {
 
 const MEANINGFUL_CASE = "mMbB";
 
+const PREFIX_CLASHES = new Set(["Mg", "Mm", "Ms", "Gb", "Mb", "Kb", "Tb"]);
+
+const titled = (name: string) =>
+  name.length > 1 && name === name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+
 const foldedUnit = (name: string): Unit | null | undefined => {
   const unit = FOLDED.get(name.toLowerCase());
   const oneCase = name === name.toLowerCase() || name === name.toUpperCase();
-  if (!unit || oneCase || name.length > 3 || name.length !== unit.symbol.length) {
+  if (!unit || oneCase || name.length > 3 || (titled(name) && !PREFIX_CLASHES.has(name))) {
     return unit;
   }
-  return [...name].every(
-    (letter, at) => letter === unit.symbol[at] || !MEANINGFUL_CASE.includes(letter),
-  )
+  return name.length === unit.symbol.length &&
+    [...name].every((letter, at) => letter === unit.symbol[at] || !MEANINGFUL_CASE.includes(letter))
     ? unit
     : null;
+};
+
+const ALTERNATES: Record<string, string> = { oz: "floz", MB: "mbar" };
+
+const alike = (one: Unit, other: Unit): Unit | undefined => {
+  if (one.kind === other.kind) {
+    return one;
+  }
+  const alternate = EXACT.get(ALTERNATES[one.symbol] ?? "");
+  return alternate?.kind === other.kind ? alternate : undefined;
 };
 
 const unitOf = (name: string, rates: Rates): Unit | undefined => {
@@ -175,8 +191,11 @@ const GROUPED = /^-?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/;
 const numberOf = (text: string) =>
   Number(GROUPED.test(text) ? text.replaceAll(",", "") : text.replace(",", "."));
 
+const EXACT_UP_TO = 1e12;
+const roughly = (value: number) => Math.abs(value) >= EXACT_UP_TO && !Number.isSafeInteger(value);
+
 const plain = (value: number) =>
-  Number.isInteger(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER
+  Number.isSafeInteger(value)
     ? String(value)
     : value.toLocaleString("en-US", { maximumSignificantDigits: 12, useGrouping: false });
 
@@ -195,14 +214,11 @@ const shown = (value: number, kind: string) =>
 const unitsOf = (sign: string, rest: string, rates: Rates): [Unit, Unit] | undefined => {
   for (const separator of rest.matchAll(SEPARATOR)) {
     const named = rest.slice(0, separator.index).trim();
-    const from = named ? unitOf(named, rates) : sign ? unitOf(sign, rates) : undefined;
-    const to = unitOf(rest.slice(separator.index + separator[0].length).trim(), rates);
-    if (
-      from &&
-      to &&
-      from.kind === to.kind &&
-      (!sign || !named || unitOf(sign, rates)?.symbol === from.symbol)
-    ) {
+    const said = named ? unitOf(named, rates) : sign ? unitOf(sign, rates) : undefined;
+    const asked = unitOf(rest.slice(separator.index + separator[0].length).trim(), rates);
+    const from = said && asked ? alike(said, asked) : undefined;
+    const to = from && asked ? alike(asked, from) : undefined;
+    if (from && to && (!sign || !named || unitOf(sign, rates)?.symbol === from.symbol)) {
       return [from, to];
     }
   }
@@ -223,7 +239,7 @@ export function convert(text: string, rates: Rates = {}): Conversion | undefined
   const amount = numberOf(digits!);
   const base = amount * from.factor + (from.offset ?? 0);
   const value = (base - (to.offset ?? 0)) / to.factor;
-  if (!Number.isFinite(value)) {
+  if (!Number.isFinite(value) || roughly(value) || roughly(amount)) {
     return undefined;
   }
   return {

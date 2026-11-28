@@ -449,8 +449,14 @@ export function App(props: {
       (found) => {
         if (found && Object.keys(found).length > 0) {
           setRates(found);
-          if (typedText() && !covered() && !answering()) {
+          if (!typedText()) {
+            return;
+          }
+          if (covered() || answering()) {
+            rowsOutdated = true;
+          } else {
             build(false);
+            select(selected());
           }
         }
       },
