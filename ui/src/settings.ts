@@ -13,7 +13,6 @@ export type RowId =
   | "ai"
   | "effort"
   | "grammar"
-  | "currency"
   | "file";
 export type Effort = "low" | "medium" | "high";
 export type HotkeyRow = "hotkey" | "clipboard";
@@ -29,7 +28,6 @@ export type SettingsView = {
   terminals: TerminalRow[];
   file: string;
   atLogin: AtLogin;
-  fixerKey: string | null;
 };
 export type SettingsMenu = { title: string; actions: Action[]; tall: boolean; chooser: boolean };
 export type EngineStep =
@@ -103,13 +101,6 @@ export const SETTING_ROWS: SettingRow[] = [
     name: "Fix grammar",
     hint: "Always Claude Code at low effort for speed, web search off",
     words: "claude",
-  },
-  {
-    id: "currency",
-    group: "Conversions",
-    name: "Currency rates",
-    hint: "Daily rates from the European Central Bank. Copy a Fixer API key, then press Enter",
-    words: "fixer api key exchange money convert conversion",
   },
   {
     id: "file",
@@ -458,30 +449,6 @@ export function createSettings(options: {
     }
   };
 
-  let savingKey = false;
-
-  const toggleFixerKey = async () => {
-    const now = view();
-    if (!now || savingKey) {
-      return;
-    }
-    savingKey = true;
-    try {
-      const fixerKey = await call<string | null>("set_fixer_key", {
-        remove: now.fixerKey !== null,
-      });
-      const latest = view();
-      if (latest) {
-        setView({ ...latest, fixerKey });
-      }
-      setProblem(null);
-    } catch (error) {
-      setProblem({ row: "currency", text: problemOf(error) });
-    } finally {
-      savingKey = false;
-    }
-  };
-
   const chooseTerminal = async (id: TerminalId) => {
     try {
       const chosen = await call<TerminalId>("choose_terminal", { id });
@@ -565,15 +532,6 @@ export function createSettings(options: {
           : undefined;
       case "grammar":
         return undefined;
-      case "currency":
-        return now
-          ? {
-              title: now.fixerKey ? "Remove Fixer key" : "Use Fixer key from clipboard",
-              keys: "↵",
-              hides: false,
-              run: () => void toggleFixerKey(),
-            }
-          : undefined;
       case "file":
         return { title: "Open settings file", keys: "↵", hides: true, run: openFile };
     }
@@ -643,9 +601,6 @@ export function createSettings(options: {
       if (out) {
         return { text: `${out.name}: ${out.through} is signed out on this Mac`, warn: true };
       }
-    }
-    if (row.id === "currency" && now?.fixerKey) {
-      return { text: "Fixer key saved. The ECB's rates stand in when Fixer fails", warn: false };
     }
     return { text: row.hint, warn: false };
   };

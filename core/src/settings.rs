@@ -16,14 +16,13 @@ pub const PINNED_REPOS: &str = "pinned_repos";
 pub const PULL_REQUESTS: &str = "pull_requests";
 pub const VIM: &str = "vim";
 pub const TERMINAL: &str = "terminal";
-pub const FIXER_KEY: &str = "fixer_key";
 pub const VIEW_ID: &str = "raiden:settings";
 pub const VIEW_TITLE: &str = "Settings";
 pub const FILE_ID: &str = "raiden:settings-file";
 pub const FILE_TITLE: &str = "Open Settings File";
 pub const SPOTLIGHT_HOLDS: &str = "Spotlight holds ⌘Space. Turn off its shortcut in System Settings, Keyboard, Keyboard Shortcuts, Spotlight.";
 pub const ONLY_RAIDEN: &str = "⌘Space can open only Raiden, not Clipboard history";
-const KNOWN: [&str; 9] = [
+const KNOWN: [&str; 8] = [
     HOTKEY,
     CLIPBOARD_HOTKEY,
     AI,
@@ -32,7 +31,6 @@ const KNOWN: [&str; 9] = [
     PULL_REQUESTS,
     VIM,
     TERMINAL,
-    FIXER_KEY,
 ];
 const MODIFIER_SYMBOLS: [char; 4] = ['⌃', '⌥', '⇧', '⌘'];
 
@@ -197,7 +195,6 @@ pub struct Settings {
     pub pull_requests: bool,
     pub vim: bool,
     pub terminal: Option<Terminal>,
-    pub fixer_key: Option<String>,
 }
 
 impl Settings {
@@ -232,7 +229,6 @@ impl Settings {
             pull_requests: false,
             vim: false,
             terminal: None,
-            fixer_key: None,
         }
     }
 }
@@ -359,27 +355,6 @@ pub fn load(text: Option<&str>, development: bool, previous: Option<&Settings>) 
             }
         },
     };
-    let fixer_key = match document.get(FIXER_KEY) {
-        None => defaults.fixer_key,
-        Some(item) => match item.as_str().map(str::trim) {
-            Some("") => None,
-            Some(key) => match crate::rates::fixer_key(key) {
-                Ok(key) => Some(key),
-                Err(_) => {
-                    problems.push(format!(
-                        "{FIXER_KEY} must be 32 hex characters. Raiden keeps the key it had."
-                    ));
-                    kept.fixer_key.clone()
-                }
-            },
-            None => {
-                problems.push(format!(
-                    "{FIXER_KEY} must be text. Raiden keeps the key it had."
-                ));
-                kept.fixer_key.clone()
-            }
-        },
-    };
     problems.extend(
         document
             .iter()
@@ -398,7 +373,6 @@ pub fn load(text: Option<&str>, development: bool, previous: Option<&Settings>) 
             pull_requests,
             vim,
             terminal,
-            fixer_key,
         },
         problems,
     }
@@ -619,10 +593,6 @@ pub fn starter(development: bool) -> String {
          # Vim keys: Esc switches to Normal, where j and k move and letters stop typing.\n\
          # i, a or / goes back to typing.\n\
          # vim = false\n\
-         \n\
-         # A Fixer API key from fixer.io for currency conversions. Left out, Raiden uses the\n\
-         # European Central Bank's daily rates from frankfurter.dev, which need no key.\n\
-         # fixer_key = \"\"\n\
          \n\
          # Repositories offered as quick filters in Pull Requests, such as [\"owner/repo\"].\n\
          # pinned_repos = []\n\
@@ -1017,38 +987,6 @@ mod tests {
         assert!(!load(None, false, None).settings.vim);
         assert!(!load(Some(&starter(false)), false, None).settings.vim);
         assert!(load(Some("vim = true"), false, None).problems.is_empty());
-    }
-
-    #[test]
-    fn the_fixer_key_is_read_from_the_file_and_empty_means_none() {
-        let key = "fixer_key = \"0123456789abcdef0123456789abcdef\"";
-        assert_eq!(
-            load(Some(key), false, None).settings.fixer_key.as_deref(),
-            Some("0123456789abcdef0123456789abcdef")
-        );
-        assert_eq!(
-            load(Some("fixer_key = \"\""), false, None)
-                .settings
-                .fixer_key,
-            None
-        );
-        assert_eq!(
-            load(Some(&starter(false)), false, None).settings.fixer_key,
-            None
-        );
-        let previous = Settings {
-            fixer_key: Some("kept".to_owned()),
-            ..Settings::defaults(false)
-        };
-        for text in [
-            "fixer_key = 5",
-            "fixer_key = \"éaaa\"",
-            "fixer_key = \"x\\\" output=y\"",
-        ] {
-            let loaded = load(Some(text), false, Some(&previous));
-            assert_eq!(loaded.settings.fixer_key.as_deref(), Some("kept"), "{text}");
-            assert_eq!(loaded.problems.len(), 1, "{text}");
-        }
     }
 
     #[test]

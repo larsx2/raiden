@@ -38,7 +38,6 @@ describe("settings rows", () => {
     ).toEqual([
       ["General", ["hotkey", "clipboard", "login", "terminal", "vim"]],
       ["Ask AI", ["ai", "effort", "grammar"]],
-      ["Conversions", ["currency"]],
       ["File", ["file"]],
     ]);
   });
@@ -54,10 +53,8 @@ describe("settings rows", () => {
       "ai",
       "effort",
       "grammar",
-      "currency",
       "file",
     ]);
-    expect(ids("fixer")).toEqual(["currency"]);
     expect(ids("clip")).toEqual(["clipboard"]);
     expect(ids("hotkey")).toEqual(["hotkey", "clipboard"]);
     expect(ids("ai")).toEqual(["ai", "effort", "grammar"]);

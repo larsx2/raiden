@@ -1,23 +1,7 @@
 use std::collections::HashMap;
 
-const FREE: &str = "https://api.frankfurter.dev/v1/latest?base=USD";
-const FIXER: &str = "https://data.fixer.io/api/latest?access_key=";
-
-pub fn link(fixer_key: Option<&str>) -> String {
-    match fixer_key.map(self::fixer_key) {
-        Some(Ok(key)) => format!("{FIXER}{key}"),
-        _ => FREE.to_owned(),
-    }
-}
-
-pub fn fixer_key(text: &str) -> Result<String, String> {
-    let key = text.trim();
-    if key.len() == 32 && key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Ok(key.to_ascii_lowercase())
-    } else {
-        Err("Copy a Fixer API key first: the 32 hex characters on fixer.io's dashboard".to_owned())
-    }
-}
+/// The European Central Bank's daily rates, through frankfurter.dev.
+pub const LINK: &str = "https://api.frankfurter.dev/v1/latest?base=USD";
 
 pub fn rates_of(body: &str) -> Option<HashMap<String, f64>> {
     let reply: serde_json::Value = serde_json::from_str(body).ok()?;
@@ -44,42 +28,6 @@ mod tests {
         assert_eq!(rates.get("USD"), Some(&1.0));
         assert_eq!(rates.get("MXN"), Some(&18.2));
         assert_eq!(rates.get("BAD"), None);
-    }
-
-    #[test]
-    fn fixer_keys_are_32_hex_digits() {
-        let key = "0123456789abcdef0123456789ABCDEF";
-        assert_eq!(
-            fixer_key(&format!(" {key}\n")),
-            Ok(key.to_ascii_lowercase())
-        );
-        for text in ["", "hello", "0123456789abcdef0123456789abcdeg", &key[1..]] {
-            assert!(fixer_key(text).is_err(), "{text}");
-        }
-    }
-
-    #[test]
-    fn the_link_uses_fixer_only_with_a_key() {
-        assert!(link(None).starts_with("https://api.frankfurter.dev/"));
-        let key = "0123456789abcdef0123456789abcdef";
-        assert_eq!(
-            link(Some(key)),
-            format!("https://data.fixer.io/api/latest?access_key={key}")
-        );
-        assert_eq!(link(Some("x\" output=y")), link(None));
-    }
-
-    #[test]
-    fn reads_what_fixer_says_and_its_failures() {
-        let rates = rates_of(
-            r#"{"success":true,"timestamp":1,"base":"EUR","date":"2026-11-27","rates":{"USD":1.1}}"#,
-        )
-        .unwrap();
-        assert_eq!(rates.get("EUR"), Some(&1.0));
-        assert_eq!(
-            rates_of(r#"{"success":false,"error":{"code":101,"type":"invalid_access_key"}}"#),
-            None
-        );
     }
 
     #[test]

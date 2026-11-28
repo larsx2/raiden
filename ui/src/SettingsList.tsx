@@ -20,7 +20,6 @@ const GLYPH_OF: Record<RowId, GlyphName> = {
   ai: "sparkle",
   effort: "gauge",
   grammar: "pen",
-  currency: "gauge",
   file: "file",
 };
 
@@ -198,9 +197,6 @@ function Value(props: { id: RowId; settings: Settings; icon: Icon }): JSX.Elemen
         {(shown) => <>{effortName(shown().effort)}</>}
       </Match>
       <Match when={props.id === "grammar"}>Claude</Match>
-      <Match when={props.id === "currency" && view()}>
-        {(shown) => <>{shown().fixerKey ? `Fixer ${shown().fixerKey}` : "ECB"}</>}
-      </Match>
       <Match when={props.id === "file"}>
         Open <Keys keys={OPEN_FILE_KEYS} />
       </Match>
