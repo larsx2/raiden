@@ -1,0 +1,24 @@
+{
+  "display_information": {
+    "name": "Raiden",
+    "description": "Search Slack from the Raiden launcher.",
+    "background_color": "#1b1b1f"
+  },
+  "oauth_config": {
+    "scopes": {
+      "user": [
+        "users:read",
+        "channels:read",
+        "groups:read",
+        "im:read",
+        "mpim:read",
+        "search:read"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

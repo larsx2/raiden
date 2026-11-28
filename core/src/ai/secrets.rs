@@ -54,7 +54,7 @@ impl Kind {
             Kind::GithubFineGrainedToken => "GitHub fine-grained token",
             Kind::AwsAccessKeyId => "AWS access key ID",
             Kind::AwsSecretAccessKey => "AWS secret access key",
-            Kind::SlackBotToken => "Slack bot token",
+            Kind::SlackBotToken => "Slack token",
             Kind::StripeSecretKey => "Stripe secret key",
             Kind::PostgresPassword => "Postgres password",
             Kind::JsonWebToken => "JSON Web Token",
@@ -71,7 +71,7 @@ impl Kind {
                 standalone(r"(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}") + r"(?:[^A-Za-z0-9]|$)"
             }
             Kind::AwsSecretAccessKey => r#"(?i)(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?secret[_-]?key|secret[_-]?access[_-]?key)["']?\s*(?:[:=]|%3D)\s*["']?(?P<secret>[A-Za-z0-9/+]{40})(?:[^A-Za-z0-9/+]|$)"#.to_owned(),
-            Kind::SlackBotToken => standalone(r"xoxb-[0-9]{8,}-[0-9]{8,}-[A-Za-z0-9]{20,}"),
+            Kind::SlackBotToken => standalone(r"xox[a-z]-[A-Za-z0-9-]{20,}"),
             Kind::StripeSecretKey => standalone(r"[sr]k_(?:live|test)_[A-Za-z0-9]{20,}"),
             Kind::PostgresPassword => {
                 r"\bpostgres(?:ql)?(?:\+[a-z0-9]+)?://[^\s:/@]*:(?P<secret>[^\s@]+)@".to_owned()
@@ -376,6 +376,14 @@ pub(crate) mod tests {
         let hidden = hide(text);
         assert_eq!(hidden.text, text);
         assert_eq!(hidden.total(), 0);
+    }
+
+    #[test]
+    fn slack_user_tokens_are_hidden_not_just_bot_tokens() {
+        let user = ["xoxp", &digits(12), &digits(12), &digits(12), &letters(32)].join("-");
+        let hidden = hide(&format!("token {user} here"));
+        assert!(!hidden.text.contains(&user), "{}", hidden.text);
+        assert_eq!(hidden.counts[&Kind::SlackBotToken], 1);
     }
 
     #[test]
