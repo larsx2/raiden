@@ -97,6 +97,13 @@ impl Problem {
         )
     }
 
+    pub fn not_a_user_token() -> Self {
+        Self::new(
+            ProblemKind::SignedOut,
+            "That is a bot token, which cannot search messages. Paste the User OAuth Token (xoxp-…) from the Raiden app's OAuth page in Slack.",
+        )
+    }
+
     pub fn failed(detail: &str) -> Self {
         let detail = detail.trim().trim_end_matches('.');
         Self::new(
@@ -140,13 +147,14 @@ pub fn check(value: &Value, now: u64) -> Result<(), Problem> {
 /// use raiden_core::slack::can_search;
 /// use serde_json::json;
 /// assert!(can_search(&json!({"ok": false, "error": "missing_scope"})).is_err());
+/// assert!(can_search(&json!({"ok": false, "error": "not_allowed_token_type"})).is_err());
 /// assert!(can_search(&json!({"ok": false, "error": "ratelimited"})).is_ok());
 /// ```
 pub fn can_search(value: &Value) -> Result<(), Problem> {
-    if value.get("error").and_then(Value::as_str) == Some("missing_scope") {
-        Err(Problem::cannot_search())
-    } else {
-        Ok(())
+    match value.get("error").and_then(Value::as_str) {
+        Some("missing_scope") => Err(Problem::cannot_search()),
+        Some("not_allowed_token_type") => Err(Problem::not_a_user_token()),
+        _ => Ok(()),
     }
 }
 

@@ -32,7 +32,9 @@ const CONVERSATION_PAGE: usize = 999;
 // ponytail: a backstop against a cursor that never ends, far past any real workspace.
 const PAGES: usize = 1000;
 // A rate-limited page is retried after Slack's minute this many times before giving up.
-const LIMITED_RETRIES: usize = 10;
+// ponytail: at most this long waiting out rate limits in one catalog fetch; past it the fetch
+// fails as limited and the 30s backoff takes over.
+const LIMITED_WAIT: u64 = 180;
 // DMs looked up one by one for their unread count; see `slack::dm_lookups`.
 const DM_LOOKUPS: usize = 40;
 const DM_LOOKUP_THREADS: usize = 8;
@@ -69,6 +71,8 @@ struct Catalog {
     fetched: u64,
     token: String,
     entries: Vec<Entry>,
+    // The DM conversations whose unread counts `fill_unreads` looks up.
+    dms: Vec<Hit>,
 }
 
 impl Slack {
@@ -94,22 +98,22 @@ impl Inner {
                 return Some(token.clone());
             }
         }
-        // Read the Keychain under the same lock a sign-out holds, so a sign-out
-        // in progress cannot have its just-deleted token read back and cached.
+        // The Keychain may wait on a prompt for as long as the person takes, so it is read
+        // outside the lock a sign-out holds. A sign-out bumps the account before and after it
+        // deletes, so a read that overlapped one is dropped instead of cached.
+        let account = self.account.load(Ordering::SeqCst);
+        let read = token();
         let _change = self
             .account_change
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        {
-            // A sign-in may have filled the cache while we waited for the lock.
-            let guard = self.token.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(token) = guard.as_ref() {
-                return Some(token.clone());
-            }
+        let mut guard = self.token.lock().unwrap_or_else(|e| e.into_inner());
+        // A sign-in may have filled the cache while the Keychain answered.
+        if guard.is_some() || self.account.load(Ordering::SeqCst) != account {
+            return guard.clone();
         }
-        let token = token()?;
-        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.clone());
-        Some(token)
+        *guard = read.clone();
+        read
     }
 }
 
@@ -242,14 +246,6 @@ fn save_token(inner: &Arc<Inner>, token: &str) -> SlackView {
         return SlackView::blocked(Problem::signed_out());
     }
     let account = inner.account.fetch_add(1, Ordering::SeqCst) + 1;
-    // A token that cannot search messages would pass every name lookup and then fail on the
-    // first message search, so refuse it here and say which permission is missing.
-    if let Some(problem) = get(token, &search_url("from:me", 1))
-        .ok()
-        .and_then(|reply| slack::can_search(&reply).err())
-    {
-        return SlackView::blocked(problem);
-    }
     let catalog = match fetch_catalog(token) {
         Ok(catalog) => catalog,
         // The token never checked out, so keep onboarding open rather than
@@ -272,6 +268,7 @@ fn save_token(inner: &Arc<Inner>, token: &str) -> SlackView {
         *inner.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.to_owned());
         *inner.catalog.lock().unwrap_or_else(|e| e.into_inner()) = Some(catalog);
     }
+    fill_unreads(inner, token, account);
     search(inner, "")
 }
 
@@ -283,6 +280,7 @@ fn sign_out(inner: &Inner) -> SlackView {
             .unwrap_or_else(|e| e.into_inner());
         inner.account.fetch_add(1, Ordering::SeqCst);
         let gone = forget_token();
+        inner.account.fetch_add(1, Ordering::SeqCst);
         *inner.token.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *inner.catalog.lock().unwrap_or_else(|e| e.into_inner()) = None;
         gone
@@ -400,7 +398,7 @@ fn recent_failure(inner: &Inner, token: &str) -> Option<Problem> {
 }
 
 // Fetches the catalog and installs it; the caller holds `fetching`.
-fn refresh(inner: &Inner, token: &str) -> Result<(), Problem> {
+fn refresh(inner: &Arc<Inner>, token: &str) -> Result<(), Problem> {
     let account = inner.account.load(Ordering::SeqCst);
     let fetched = fetch_catalog(token);
     *inner.failed.lock().unwrap_or_else(|e| e.into_inner()) = fetched
@@ -429,7 +427,42 @@ fn refresh(inner: &Inner, token: &str) -> Result<(), Problem> {
             *guard = Some(catalog);
         }
     }
+    fill_unreads(inner, token, account);
     Ok(())
+}
+
+// Looks up the DMs' unread counts behind an installed catalog, so the list never waits on
+// those calls, then copies them onto the rows, unless the account or catalog changed meanwhile.
+fn fill_unreads(inner: &Arc<Inner>, token: &str, account: u64) {
+    let inner = inner.clone();
+    let token = token.to_owned();
+    std::thread::spawn(move || {
+        let (fetched, dms) = {
+            let guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
+            match guard.as_ref().filter(|catalog| catalog.token == token) {
+                Some(catalog) => (catalog.fetched, catalog.dms.clone()),
+                None => return,
+            }
+        };
+        let ids: Vec<String> = dms.iter().map(|dm| dm.id.clone()).collect();
+        let dms = slack::with_dm_state(dms, &dm_state(&token, &ids));
+        let mut guard = inner.catalog.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(catalog) = guard
+            .as_mut()
+            .filter(|catalog| catalog.token == token && catalog.fetched == fetched)
+        else {
+            return;
+        };
+        if inner.account.load(Ordering::SeqCst) != account {
+            return;
+        }
+        for dm in dms {
+            if let Some(entry) = catalog.entries.iter_mut().find(|e| e.hit.link == dm.link) {
+                entry.hit.unread = dm.unread;
+                entry.hit.updated = entry.hit.updated.max(dm.updated);
+            }
+        }
+    });
 }
 
 fn fetch_catalog(token: &str) -> Result<Catalog, Problem> {
@@ -456,19 +489,29 @@ fn fetch_catalog(token: &str) -> Result<Catalog, Problem> {
     // ponytail: recency is when you last wrote somewhere, from your 100 latest messages; a DM you
     // only received, or one older than those, sorts by unread state alone. A failed lookup
     // costs only the order.
-    let latest = get(token, &latest_url())
-        .ok()
+    let latest = get(token, &latest_url()).ok();
+    // A token that cannot search messages would pass every name lookup and then fail on the
+    // first message search, so it is refused here, saying which permission is missing.
+    if let Some(reply) = &latest {
+        slack::can_search(reply)?;
+    }
+    let latest = latest
         .filter(|found| slack::check(found, now()).is_ok())
         .map(|found| slack::last_written(&found))
         .unwrap_or_default();
     let conversations = slack::with_recency(conversations, &latest);
-    let replies = dm_state(token, &slack::dm_lookups(&conversations, DM_LOOKUPS));
-    let conversations = slack::with_dm_state(conversations, &replies);
+    let wanted = slack::dm_lookups(&conversations, DM_LOOKUPS);
+    let dms = conversations
+        .iter()
+        .filter(|hit| wanted.contains(&hit.id))
+        .cloned()
+        .collect();
 
     Ok(Catalog {
         fetched: now(),
         token: token.to_owned(),
         entries: entries(people, conversations),
+        dms,
     })
 }
 
@@ -545,6 +588,7 @@ fn collect(
 ) -> Result<Vec<Value>, Problem> {
     let mut items = Vec::new();
     let mut cursor: Option<String> = None;
+    let mut waited = 0;
     for _ in 0..PAGES {
         let mut url = format!("{}/{endpoint}?limit={limit}", slack::API);
         if !params.is_empty() {
@@ -554,7 +598,7 @@ fn collect(
         if let Some(cursor) = &cursor {
             url.push_str(&format!("&cursor={}", encode(cursor)));
         }
-        let page = page_through_limits(token, &url)?;
+        let page = page_through_limits(token, &url, &mut waited)?;
         if let Some(array) = page.get(key).and_then(Value::as_array) {
             items.extend(array.iter().cloned());
         }
@@ -572,24 +616,23 @@ fn collect(
 
 // A big workspace runs into Slack's per-minute limit while paging; waiting it out and going on
 // keeps every later page instead of failing the whole catalog.
-fn page_through_limits(token: &str, url: &str) -> Result<Value, Problem> {
-    let mut retries = 0;
+fn page_through_limits(token: &str, url: &str, waited: &mut u64) -> Result<Value, Problem> {
     loop {
-        let page = get(token, url)?;
-        match slack::check(&page, now()) {
-            Ok(()) => return Ok(page),
-            Err(problem)
-                if problem.kind == slack::ProblemKind::Limited && retries < LIMITED_RETRIES =>
-            {
-                retries += 1;
+        let page = get(token, url).and_then(|page| slack::check(&page, now()).map(|()| page));
+        match page {
+            Err(problem) if problem.kind == slack::ProblemKind::Limited => {
                 let wait = problem
                     .retry_at
                     .unwrap_or(0)
                     .saturating_sub(now())
                     .clamp(1, 60);
+                if *waited + wait > LIMITED_WAIT {
+                    return Err(problem);
+                }
+                *waited += wait;
                 sleep(Duration::from_secs(wait));
             }
-            Err(problem) => return Err(problem),
+            page => return page,
         }
     }
 }
@@ -674,7 +717,13 @@ const NOT_FOUND: i32 = -25300;
 
 fn token() -> Option<String> {
     let token = match passwords::get_generic_password(KEYCHAIN_SERVICE, slack::KEYCHAIN_ACCOUNT) {
-        Ok(bytes) => String::from_utf8(bytes).ok()?,
+        Ok(bytes) => {
+            // An old item whose delete failed when it was moved is retried each launch.
+            if !cfg!(debug_assertions) {
+                forget_legacy_token();
+            }
+            String::from_utf8(bytes).ok()?
+        }
         Err(error) if error.code() == NOT_FOUND && !cfg!(debug_assertions) => moved_token()?,
         Err(_) => return None,
     };
@@ -765,6 +814,9 @@ fn get(token: &str, url: &str) -> Result<Value, Problem> {
             "15",
             "--config",
             "-",
+            // The status and Slack's Retry-After go on a last line of their own.
+            "--write-out",
+            "\n%{http_code} %header{retry-after}",
             url,
         ])
         .env_clear()
@@ -782,11 +834,30 @@ fn get(token: &str, url: &str) -> Result<Value, Problem> {
     if timed_out {
         return Err(Problem::offline());
     }
-    let body = stdout.join().unwrap_or_default();
-    if code != Some(0) || body.trim().is_empty() {
+    let out = stdout.join().unwrap_or_default();
+    if code != Some(0) {
         return Err(Problem::offline());
     }
-    serde_json::from_str(&body).map_err(|_| Problem::failed("a reply that was not JSON"))
+    let (body, status, retry_after) = reply_parts(&out);
+    if status == 429 {
+        return Err(Problem::limited(now() + retry_after.unwrap_or(60)));
+    }
+    if body.trim().is_empty() {
+        return Err(Problem::offline());
+    }
+    serde_json::from_str(body).map_err(|_| Problem::failed("a reply that was not JSON"))
+}
+
+// Splits curl's output into the body and the status line `--write-out` adds after it.
+fn reply_parts(out: &str) -> (&str, u16, Option<u64>) {
+    let (body, last) = out.rsplit_once('\n').unwrap_or(("", out));
+    let mut fields = last.split_whitespace();
+    let status = fields
+        .next()
+        .and_then(|code| code.parse().ok())
+        .unwrap_or(0);
+    let retry_after = fields.next().and_then(|secs| secs.parse().ok());
+    (body, status, retry_after)
 }
 
 // Opens only a Slack destination: a slack:// channel or user link, or an
@@ -911,6 +982,20 @@ mod tests {
             updated: 0,
             link: link.to_owned(),
         }
+    }
+
+    #[test]
+    fn curl_output_splits_into_the_body_status_and_retry_after() {
+        assert_eq!(
+            reply_parts("{\"ok\":true}\n200 "),
+            ("{\"ok\":true}", 200, None)
+        );
+        assert_eq!(
+            reply_parts("{\"ok\":false}\n429 7"),
+            ("{\"ok\":false}", 429, Some(7))
+        );
+        assert_eq!(reply_parts("{\n}\n200 "), ("{\n}", 200, None));
+        assert_eq!(reply_parts(""), ("", 0, None));
     }
 
     #[test]
