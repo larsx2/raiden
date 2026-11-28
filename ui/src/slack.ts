@@ -74,7 +74,8 @@ export function createSlack(options: { call: Call }) {
   // The hits on screen answer an older query until the newest reply lands, so ↵ waits for it
   // instead of opening the old top row, which may be someone else's DM.
   let answered = 0;
-  let openWhenAnswered = false;
+  // The query an early ↵ was pressed for; a later edit or account change voids it.
+  let openFor: number | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const shown = createMemo(() => hits());
@@ -106,15 +107,19 @@ export function createSlack(options: { call: Call }) {
           return;
         }
         take(view, mine);
+        if (answered !== query) {
+          // A new list starts at its top row, not where the old one was left.
+          setSelected(0);
+        }
         answered = query;
-        if (openWhenAnswered) {
-          openWhenAnswered = false;
+        if (openFor === query) {
+          openFor = null;
           openHit();
         }
       })
       .catch((error: unknown) => {
         if (current()) {
-          openWhenAnswered = false;
+          openFor = null;
           batch(() => {
             setNotice(problemOf(error));
             setLoaded(true);
@@ -125,7 +130,7 @@ export function createSlack(options: { call: Call }) {
 
   const show = async () => {
     const mine = ++opened;
-    openWhenAnswered = false;
+    openFor = null;
     batch(() => {
       setOpen(true);
       setLoaded(false);
@@ -141,7 +146,7 @@ export function createSlack(options: { call: Call }) {
 
   const hide = () => {
     opened++;
-    openWhenAnswered = false;
+    openFor = null;
     clearTimeout(timer);
     batch(() => {
       setOpen(false);
@@ -156,6 +161,7 @@ export function createSlack(options: { call: Call }) {
   const filter = (text: string) => {
     // Each edit retires any query still in flight, so its late reply is dropped.
     queried++;
+    openFor = null;
     const mine = opened;
     const query = queried;
     batch(() => {
@@ -183,6 +189,7 @@ export function createSlack(options: { call: Call }) {
     if (!token || busy()) {
       return;
     }
+    openFor = null;
     const mine = opened;
     batch(() => {
       setBusy(true);
@@ -210,7 +217,7 @@ export function createSlack(options: { call: Call }) {
 
   const openHit = () => {
     if (answered !== queried) {
-      openWhenAnswered = true;
+      openFor = queried;
       return;
     }
     const hit = selectedHit();
@@ -246,6 +253,7 @@ export function createSlack(options: { call: Call }) {
 
   const signOut = () => {
     const mine = ++opened;
+    openFor = null;
     clearTimeout(timer);
     call<SlackView>("slack_sign_out")
       .then((view) => {

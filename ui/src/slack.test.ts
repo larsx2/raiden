@@ -58,8 +58,13 @@ describe("createSlack", () => {
       expect(opened).toEqual([]);
       await vi.runAllTimersAsync();
       expect(opened).toEqual(["slack://channel?team=T&id=IFA"]);
+      // An ↵ voided by more typing does not fire when that later reply lands.
+      slack.filter("if");
+      slack.act();
+      slack.filter("ifa");
+      await vi.runAllTimersAsync();
+      expect(opened).toHaveLength(1);
       dispose();
-    });
-    vi.useRealTimers();
+    }).finally(() => vi.useRealTimers());
   });
 });

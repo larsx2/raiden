@@ -188,7 +188,11 @@ pub async fn slack_open(app: AppHandle, url: String) -> Result<(), String> {
     // ever hands the link to the Slack app, never to a browser.
     if blocking({
         let link = link.clone();
-        move || in_slack_app(&link)
+        move || {
+            NSURL::URLWithString(&NSString::from_str(&link))
+                .is_some_and(|parsed| is_slack_url(&parsed))
+                && in_slack_app(&link)
+        }
     })
     .await
     {
@@ -687,7 +691,10 @@ fn get(token: &str, url: &str) -> Result<Value, Problem> {
 // character, is refused before it reaches the opener.
 fn safe_slack_link(url: &str) -> Result<&str, String> {
     let link = url.trim();
-    let clean = !link.chars().any(|c| c.is_whitespace() || c.is_control());
+    // A backslash reads as a slash to some URL parsers, which would move the host.
+    let clean = !link
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || c == '\\');
     let allowed = match link.split_once("://") {
         Some(("slack", rest)) => rest.starts_with("channel?") || rest.starts_with("user?"),
         // The authority ends at the first of / ? #; take only that, drop any
@@ -859,6 +866,7 @@ mod tests {
         assert!(safe_slack_link("https://slack.com@evil.com/x").is_err());
         assert!(safe_slack_link("https://x.slack.com.evil.com/x").is_err());
         assert!(safe_slack_link("slack://teamsy?evil").is_err());
+        assert!(safe_slack_link("https://evil.example\\@x.slack.com/x").is_err());
     }
 
     #[test]
