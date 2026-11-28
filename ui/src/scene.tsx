@@ -480,6 +480,9 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
       }
       return null as T;
     case "currency_rates":
+      if (params.get("rateswait") === "1") {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
       return { USD: 1, EUR: 0.9, MXN: 18 } as T;
     case "set_fixer_key":
       if (args?.["remove"] === true) {

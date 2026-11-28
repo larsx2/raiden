@@ -22,6 +22,12 @@ describe("convert", () => {
     expect(convert("12,500 g to kg")?.to).toBe("12.5 kg");
     expect(convert("1 sq in in cm2")?.to).toBe("6.4516 cm²");
     expect(convert("500 mb to gb")?.to).toBe("0.5 GB");
+    expect(convert("500 mL to cups")?.to).toBe("2.11337641887 cup");
+    expect(convert("1 Celsius to Fahrenheit")?.to).toBe("33.8 °F");
+    expect(convert("10 Kg to lb")?.to).toBe("22.0462262185 lb");
+    expect(convert("1 Mile to Km")?.to).toBe("1.609344 km");
+    expect(convert("1 KWh to J")?.to).toBe("3600000 J");
+    expect(convert(`1 kg${" to".repeat(100)} lb`)).toBeUndefined();
     for (const text of ["1 Gb to MB", "1 mPa to Pa", "1 Mg to kg", "1 nm to m"]) {
       expect(convert(text)).toBeUndefined();
     }
@@ -45,6 +51,7 @@ describe("convert", () => {
       value: "1800.00",
     });
     expect(convert("$90 to eur", RATES)?.to).toBe("81.00 EUR");
+    expect(convert("1 usd to gbp", RATES)?.to).toBe("0.80 GBP");
     expect(convert("10 euros in gbp", RATES)?.to).toBe("8.89 GBP");
     expect(convert("100 usd to mxn")).toBeUndefined();
     expect(convert("1 usd to xbt", { USD: 1, XBT: 0.00001234 })?.to).toBe("0.00001234 XBT");

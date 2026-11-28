@@ -26,8 +26,8 @@ const UNITS: Record<string, [string, number, string[]][]> = {
     ["st", 6.35029318, ["stone", "stones"]],
   ],
   volume: [
-    ["ml", 0.001, ["milliliter", "milliliters", "millilitre", "millilitres"]],
-    ["l", 1, ["liter", "liters", "litre", "litres"]],
+    ["ml", 0.001, ["mL", "milliliter", "milliliters", "millilitre", "millilitres"]],
+    ["l", 1, ["L", "liter", "liters", "litre", "litres"]],
     ["tsp", 0.00492892159375, ["teaspoon", "teaspoons"]],
     ["tbsp", 0.01478676478125, ["tablespoon", "tablespoons"]],
     ["floz", 0.0295735295625, ["fl oz", "fluid ounce", "fluid ounces"]],
@@ -142,10 +142,23 @@ for (const [symbol, factor, offset, names] of TEMPERATURES) {
   }
 }
 
-const oneCase = (name: string) => name === name.toLowerCase() || name === name.toUpperCase();
+const MEANINGFUL_CASE = "mMbB";
+
+const foldedUnit = (name: string): Unit | null | undefined => {
+  const unit = FOLDED.get(name.toLowerCase());
+  const oneCase = name === name.toLowerCase() || name === name.toUpperCase();
+  if (!unit || oneCase || name.length > 3 || name.length !== unit.symbol.length) {
+    return unit;
+  }
+  return [...name].every(
+    (letter, at) => letter === unit.symbol[at] || !MEANINGFUL_CASE.includes(letter),
+  )
+    ? unit
+    : null;
+};
 
 const unitOf = (name: string, rates: Rates): Unit | undefined => {
-  const known = EXACT.get(name) ?? (oneCase(name) ? FOLDED.get(name.toLowerCase()) : undefined);
+  const known = EXACT.get(name) ?? foldedUnit(name);
   if (known !== undefined) {
     return known ?? undefined;
   }
@@ -154,6 +167,7 @@ const unitOf = (name: string, rates: Rates): Unit | undefined => {
   return rate ? { kind: "currency", symbol: code, factor: 1 / rate } : undefined;
 };
 
+const LONGEST = 200;
 const AMOUNT = /^\s*([$€£¥]?)\s*(-?\d[\d.,]*|-?\.\d+)\s*(.*?)\s*$/;
 const SEPARATOR = /\s+(?:to|in|as|=|→|->)(?=\s)/gi;
 const GROUPED = /^-?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/;
@@ -167,7 +181,7 @@ const plain = (value: number) =>
     : value.toLocaleString("en-US", { maximumSignificantDigits: 12, useGrouping: false });
 
 const money = (value: number, grouping: boolean) =>
-  value !== 0 && Math.abs(value) < 1
+  value !== 0 && Math.abs(value) < 0.01
     ? value.toLocaleString("en-US", { maximumSignificantDigits: 4, useGrouping: grouping })
     : value.toLocaleString("en-US", {
         maximumFractionDigits: 2,
@@ -196,7 +210,7 @@ const unitsOf = (sign: string, rest: string, rates: Rates): [Unit, Unit] | undef
 };
 
 export function convert(text: string, rates: Rates = {}): Conversion | undefined {
-  const found = AMOUNT.exec(text);
+  const found = text.length <= LONGEST ? AMOUNT.exec(text) : null;
   if (!found) {
     return undefined;
   }

@@ -4,7 +4,10 @@ const FREE: &str = "https://api.frankfurter.dev/v1/latest?base=USD";
 const FIXER: &str = "https://data.fixer.io/api/latest?access_key=";
 
 pub fn link(fixer_key: Option<&str>) -> String {
-    fixer_key.map_or_else(|| FREE.to_owned(), |key| format!("{FIXER}{key}"))
+    match fixer_key.map(self::fixer_key) {
+        Some(Ok(key)) => format!("{FIXER}{key}"),
+        _ => FREE.to_owned(),
+    }
 }
 
 pub fn fixer_key(text: &str) -> Result<String, String> {
@@ -58,10 +61,12 @@ mod tests {
     #[test]
     fn the_link_uses_fixer_only_with_a_key() {
         assert!(link(None).starts_with("https://api.frankfurter.dev/"));
+        let key = "0123456789abcdef0123456789abcdef";
         assert_eq!(
-            link(Some("abc")),
-            "https://data.fixer.io/api/latest?access_key=abc"
+            link(Some(key)),
+            format!("https://data.fixer.io/api/latest?access_key={key}")
         );
+        assert_eq!(link(Some("x\" output=y")), link(None));
     }
 
     #[test]

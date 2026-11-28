@@ -17,48 +17,72 @@ struct Kept {
 }
 
 static KEPT: Mutex<Option<Kept>> = Mutex::new(None);
-static FAILED: Mutex<Option<Instant>> = Mutex::new(None);
+static FAILED: Mutex<Vec<(Instant, String)>> = Mutex::new(Vec::new());
+static FETCHING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-fn kept_rates() -> HashMap<String, f64> {
+fn kept(link: &str) -> Option<HashMap<String, f64>> {
+    let kept = KEPT.lock().ok()?;
+    let kept = kept.as_ref()?;
+    (kept.link == link && kept.at.elapsed() < FRESH_FOR).then(|| kept.rates.clone())
+}
+
+fn any_kept() -> HashMap<String, f64> {
     KEPT.lock()
         .ok()
         .and_then(|kept| kept.as_ref().map(|kept| kept.rates.clone()))
         .unwrap_or_default()
 }
 
-#[tauri::command]
-pub async fn currency_rates(app: AppHandle) -> HashMap<String, f64> {
-    let link = rates::link(crate::settings::fixer_key(&app).as_deref());
-    let fresh = KEPT.lock().ok().is_some_and(|kept| {
-        kept.as_ref()
-            .is_some_and(|kept| kept.link == link && kept.at.elapsed() < FRESH_FOR)
-    });
-    let backing_off = FAILED
-        .lock()
-        .ok()
-        .and_then(|failed| *failed)
-        .is_some_and(|at| at.elapsed() < RETRY_AFTER);
-    if fresh || backing_off {
-        return kept_rates();
+fn failed_lately(link: &str) -> bool {
+    FAILED.lock().is_ok_and(|failed| {
+        failed
+            .iter()
+            .any(|(at, failed)| failed == link && at.elapsed() < RETRY_AFTER)
+    })
+}
+
+fn note_failure(link: &str) {
+    if let Ok(mut failed) = FAILED.lock() {
+        failed.retain(|(at, failed)| failed != link && at.elapsed() < RETRY_AFTER);
+        failed.push((Instant::now(), link.to_owned()));
     }
-    let found = match download(&link).await {
-        None if link != rates::link(None) => download(&rates::link(None)).await,
-        found => found,
-    };
-    let Some(found) = found else {
-        if let Ok(mut failed) = FAILED.lock() {
-            *failed = Some(Instant::now());
-        }
-        return kept_rates();
+}
+
+async fn fetched(link: &str) -> Option<HashMap<String, f64>> {
+    if let Some(rates) = kept(link) {
+        return Some(rates);
+    }
+    if failed_lately(link) {
+        return None;
+    }
+    let Some(rates) = download(link).await else {
+        note_failure(link);
+        return None;
     };
     if let Ok(mut kept) = KEPT.lock() {
         *kept = Some(Kept {
             at: Instant::now(),
-            link,
-            rates: found.clone(),
+            link: link.to_owned(),
+            rates: rates.clone(),
         });
     }
-    found
+    Some(rates)
+}
+
+#[tauri::command]
+pub async fn currency_rates(app: AppHandle) -> HashMap<String, f64> {
+    let _one_at_a_time = FETCHING.lock().await;
+    let link = rates::link(crate::settings::fixer_key(&app).as_deref());
+    let free = rates::link(None);
+    if let Some(rates) = fetched(&link).await {
+        return rates;
+    }
+    if link != free
+        && let Some(rates) = fetched(&free).await
+    {
+        return rates;
+    }
+    any_kept()
 }
 
 async fn download(link: &str) -> Option<HashMap<String, f64>> {

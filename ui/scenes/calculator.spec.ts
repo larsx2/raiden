@@ -43,3 +43,12 @@ test("units convert without any rates", async ({ page }) => {
   await page.keyboard.type("100 c to f");
   await expect(page.locator(".row.selected")).toContainText("212 °F100 c to fBuilt in");
 });
+
+test("a conversion typed before the rates arrive shows once they do", async ({ page }) => {
+  await page.goto("/scene.html?fixture=apps&rateswait=1");
+  await page.waitForLoadState("load");
+  await page.locator(".row.selected").waitFor();
+  await page.keyboard.type("100 usd to mxn");
+  await expect(page.locator(".sec").first()).toHaveText("Conversion");
+  await expect(page.locator(".row.selected")).toContainText("1,800.00 MXN");
+});
