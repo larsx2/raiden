@@ -51,6 +51,7 @@ describe("moving in the question", () => {
     expect(shown(type(QUESTION, 25, "Fe"))).toBe("how do I rebas|e onto main?");
     expect(shown(type(QUESTION, 25, "Te"))).toBe("how do I rebase| onto main?");
     expect(shown(type(QUESTION, 0, "fz"))).toBe("|how do I rebase onto main?");
+    expect(shown(type("abcb", 0, "fbfz;"))).toBe("a|bcb");
     expect(shown(type("a,b,c,d", 0, "t,;"))).toBe("a,|b,c,d");
     expect(shown(type("a,b,c,d", 6, "T,;"))).toBe("a,b,|c,d");
   });

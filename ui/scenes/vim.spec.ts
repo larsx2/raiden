@@ -585,7 +585,8 @@ test.describe("editing the question in Ask AI", () => {
     await page.keyboard.type("$x");
     await expect(field).toHaveValue("how do I rebase onto mai");
     expect(await commandsSent(page)).toEqual(before);
-    await page.keyboard.type("A");
+    await page.keyboard.press("0");
+    await page.keyboard.press("Shift+A");
     await page.keyboard.type("n?");
     await expect(field).toHaveValue("how do I rebase onto main?");
   });

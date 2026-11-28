@@ -553,11 +553,15 @@ export function press(editor: Editor, line: Line, token: string): Edited | "skip
   if (parsed === "pending") {
     return { editor: { ...editor, keys }, line, insert: false };
   }
-  const cleared = { ...editor, keys: [] };
-  const unchanged = { editor: cleared, line, insert: false };
   if (parsed === "invalid") {
-    return unchanged;
+    return { editor: { ...editor, keys: [] }, line, insert: false };
   }
+  const find =
+    FINDS.has(parsed.command) && parsed.char !== undefined
+      ? { kind: parsed.command as Find["kind"], char: parsed.char }
+      : editor.find;
+  const cleared = { ...editor, keys: [], find };
+  const unchanged = { editor: cleared, line, insert: false };
   const done = run(cleared, line, parsed);
   if (done === "skip") {
     return editor.keys.every((key) => /^[0-9]$/.test(key)) ? "skip" : unchanged;
