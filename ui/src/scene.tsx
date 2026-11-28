@@ -9,9 +9,13 @@ import {
   FIXTURE_FILES,
   FIXTURE_HISTORY,
   FIXTURE_TERMINALS,
+  FIXTURE_SLACK_MESSAGES,
+  FIXTURE_SLACK_NAMES,
   QUICK_MESSAGE,
+  SLACK_MANIFEST,
   SPOTLIGHT_REFUSAL,
   type Fixture,
+  type FixtureHit,
 } from "../scenes/scenes";
 import {
   App,
@@ -52,7 +56,7 @@ const fixtureFiles =
       })
     : [];
 const commands: InstalledApp[] =
-  params.get("commands") === "1"
+  params.get("commands") === "1" || fixture === "slack"
     ? [
         { name: "Fix grammar", path: "raiden:fix-grammar" },
         { name: "Clipboard History", path: "raiden:clipboard", under: "Raiden" },
@@ -83,6 +87,10 @@ const settings: InstalledApp[] =
     : [];
 const apps: InstalledApp[] = [
   ...shown.map(([name]) => ({ name, path: `/Applications/${name}.app` })),
+  // The real Slack app: typing "slack" finds it, Tab opens the search view.
+  ...(params.get("slackapp") === "1" || fixture === "slack"
+    ? [{ name: "Slack", path: "/Applications/Slack.app" }]
+    : []),
   ...settings,
   ...commands,
 ];
@@ -162,6 +170,44 @@ window.editSettings = (edit) => {
   if (edit.vim !== undefined) {
     vimKeys = edit.vim;
   }
+};
+
+let slackHasToken = params.get("slacktoken") !== "0";
+const slackRank = (hits: FixtureHit[]) =>
+  [...hits].sort((a, b) => {
+    const key = (hit: FixtureHit): [number, number, number, number] => [
+      hit.unread > 0 ? 1 : 0,
+      hit.mention ? 1 : 0,
+      hit.unread,
+      hit.updated,
+    ];
+    const [ak, am, au, at] = key(a);
+    const [bk, bm, bu, bt] = key(b);
+    return bk - ak || bm - am || bu - au || bt - at;
+  });
+const slackView = (query: string) => {
+  if (!slackHasToken) {
+    return {
+      hasToken: false,
+      hits: [] as FixtureHit[],
+      problem: {
+        kind: "noToken",
+        text: "Raiden has no Slack token yet. Open Slack settings to paste your User OAuth Token.",
+      },
+    };
+  }
+  const q = query.trim().toLowerCase();
+  const names = FIXTURE_SLACK_NAMES.filter(
+    (hit) =>
+      q === "" || hit.title.toLowerCase().includes(q) || hit.subtitle.toLowerCase().includes(q),
+  );
+  const messages =
+    q.length >= 3
+      ? FIXTURE_SLACK_MESSAGES.filter(
+          (hit) => hit.title.toLowerCase().includes(q) || hit.subtitle.toLowerCase().includes(q),
+        )
+      : [];
+  return { hasToken: true, hits: slackRank([...names, ...messages]) };
 };
 
 window.sent = [];
@@ -396,6 +442,36 @@ const call: Call = async <T,>(command: string, args?: Record<string, unknown>) =
         String(args?.["query"] ?? ""),
         Array.isArray(args?.["urls"]) ? (args["urls"] as string[]) : null,
       ) as T;
+    case "slack_manifest":
+      return SLACK_MANIFEST as T;
+    case "slack_has_token":
+      return slackHasToken as T;
+    case "slack_search":
+      return slackView(String(args?.["query"] ?? "")) as T;
+    case "slack_save_token": {
+      const token = String(args?.["token"] ?? "");
+      if (!token.startsWith("xox")) {
+        return {
+          hasToken: false,
+          hits: [],
+          problem: { kind: "signedOut", text: "Slack rejected the token." },
+        } as T;
+      }
+      slackHasToken = true;
+      return slackView("") as T;
+    }
+    case "slack_open":
+      return null as T;
+    case "slack_sign_out":
+      slackHasToken = false;
+      return {
+        hasToken: false,
+        hits: [],
+        problem: {
+          kind: "noToken",
+          text: "Raiden has no Slack token yet. Open Slack settings to paste your User OAuth Token.",
+        },
+      } as T;
     case "clipboard_thumb":
       return "/scenes/icons/shot.png" as T;
     case "clipboard_delete": {
@@ -583,7 +659,7 @@ if (root && fixture === "quick") {
   );
   const field = root.querySelector("input");
   const typed = moment && moment !== "waiting" ? recorded.question : query;
-  if (field && typed && fixture !== "clipboard" && fixture !== "pulls") {
+  if (field && typed && fixture !== "clipboard" && fixture !== "pulls" && fixture !== "slack") {
     field.value = typed;
     field.dispatchEvent(new InputEvent("input", { bubbles: true }));
   }

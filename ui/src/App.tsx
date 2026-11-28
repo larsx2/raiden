@@ -74,6 +74,8 @@ import {
 } from "./pulls";
 import { PullsList } from "./PullsList";
 import { Reply } from "./Reply";
+import { SLACK_PLACEHOLDER, SLACK_TITLE, TOKEN_PLACEHOLDER, createSlack } from "./slack";
+import { SlackList, SlackMark } from "./SlackList";
 import type { Search } from "./search";
 import { SETTINGS_PLACEHOLDER, createSettings, type Pressed } from "./settings";
 import { SettingsList } from "./SettingsList";
@@ -136,6 +138,8 @@ const CLIPBOARD_VIEW = "raiden:clipboard";
 const PULLS_VIEW = "raiden:pull-requests";
 const isCommand = (app: InstalledApp | undefined) => app?.path.startsWith(COMMAND) === true;
 const isAiCommand = (app: InstalledApp | undefined) => app?.path === GRAMMAR;
+// Tab on the real Slack.app opens our search view instead of asking the AI.
+const isSlackApp = (app: InstalledApp | undefined) => app?.path.endsWith("/Slack.app") === true;
 const SETTING = "x-apple.systempreferences:";
 const SETTINGS_APP = "/System/Applications/System Settings.app";
 const isSetting = (app: InstalledApp | undefined) => app?.path.startsWith(SETTING) === true;
@@ -230,10 +234,25 @@ export function App(props: {
   });
   const clip = createClipboard({ call: props.call });
   const pulls = createPulls({ call: props.call });
+  const slk = createSlack({ call: props.call });
+  // The token is typed into the shared search field; clear that field whenever
+  // onboarding opens or closes so a pasted token is never left to be sent as a
+  // search once the view becomes a search again.
+  createEffect(
+    on(
+      slk.gate,
+      (gate, was) => {
+        if (field && was !== gate) {
+          field.value = "";
+        }
+      },
+      { defer: true },
+    ),
+  );
   let returnTo = "";
   let pullsReturnTo = "";
   const pullsShown = () => pulls.open() && !answering();
-  const covered = () => prefs.open() || clip.open() || pullsShown();
+  const covered = () => prefs.open() || clip.open() || pullsShown() || slk.open();
   const chatting = () => answering() && !covered();
   const size = createWindowSize({ call: props.call });
 
@@ -591,6 +610,8 @@ export function App(props: {
     }
     if (clip.open()) {
       clip.hide();
+    } else if (slk.open()) {
+      slk.hide();
     } else if (pullsShown()) {
       returnTo = leavePulls();
     } else {
@@ -611,6 +632,8 @@ export function App(props: {
     }
     if (prefs.open()) {
       prefs.hide();
+    } else if (slk.open()) {
+      slk.hide();
     } else if (pullsShown()) {
       returnTo = leavePulls();
     } else {
@@ -623,6 +646,43 @@ export function App(props: {
     field?.focus();
   };
 
+  const openSlack = () => {
+    setMenu(null);
+    if (slk.open()) {
+      field?.focus();
+      return;
+    }
+    if (clip.open()) {
+      clip.hide();
+    } else if (prefs.open()) {
+      prefs.hide();
+    } else if (pullsShown()) {
+      returnTo = leavePulls();
+    } else {
+      returnTo = field?.value ?? "";
+    }
+    if (field) {
+      field.value = "";
+    }
+    void slk.show();
+    field?.focus();
+  };
+
+  const closeSlack = () => {
+    slk.hide();
+    setMenu(null);
+    if (field) {
+      field.value = returnTo;
+    }
+    returnTo = "";
+    field?.focus();
+    if (answering()) {
+      setDraft(query());
+    } else {
+      catchUpRows();
+    }
+  };
+
   const openPulls = async (start?: PullsOpening, picked?: Picked) => {
     setMenu(null);
     if (pullsShown()) {
@@ -631,6 +691,8 @@ export function App(props: {
     }
     if (clip.open()) {
       clip.hide();
+    } else if (slk.open()) {
+      slk.hide();
     } else if (prefs.open()) {
       prefs.hide();
     } else {
@@ -1047,6 +1109,15 @@ export function App(props: {
       });
       return;
     }
+    if (slk.open()) {
+      setMenuQuery("");
+      setMenuSelected(0);
+      setMenu({
+        title: slk.selectedHit()?.title ?? SLACK_TITLE,
+        actions: [...slk.actions(), size.action()],
+      });
+      return;
+    }
     if (prefs.open()) {
       setMenuQuery("");
       setMenuSelected(0);
@@ -1089,6 +1160,8 @@ export function App(props: {
       field.value = "";
       if (clip.open()) {
         clip.filter("");
+      } else if (slk.open()) {
+        slk.filter("");
       } else if (
         pullsShown() &&
         !pulls.lost() &&
@@ -1174,6 +1247,9 @@ export function App(props: {
         startOverOnHide = true;
       }
       clip.act();
+    } else if (slk.open()) {
+      // Opening a hit hides the launcher natively; saving a token keeps it open.
+      slk.act();
     } else if (prefs.open()) {
       prefs.act();
     } else if (answering()) {
@@ -1207,6 +1283,10 @@ export function App(props: {
         clip.page(direction * (CLIPS_PER_PAGE + gained(CLIP_HEIGHT)));
         return;
       }
+      if (slk.open()) {
+        slk.page(direction * (CLIPS_PER_PAGE + gained(CLIP_HEIGHT)));
+        return;
+      }
       if (pullsShown()) {
         pulls.page(direction * (PULLS_PER_PAGE + gained(PULL_HEIGHT)));
         return;
@@ -1227,6 +1307,8 @@ export function App(props: {
         moveInMenu(step);
       } else if (clip.open()) {
         clip.move(step);
+      } else if (slk.open()) {
+        slk.move(step);
       } else if (pullsShown()) {
         pulls.move(step);
       } else if (prefs.open()) {
@@ -1255,7 +1337,7 @@ export function App(props: {
       }
       const current = menu();
       const editing = current ? menuQuery() : query();
-      if ((clip.open() || pullsShown()) && keys === DELETE_KEYS && editing !== "") {
+      if ((clip.open() || pullsShown() || slk.open()) && keys === DELETE_KEYS && editing !== "") {
         return false;
       }
       if (current) {
@@ -1277,6 +1359,10 @@ export function App(props: {
         const selecting = field && field.selectionStart !== field.selectionEnd;
         return !selecting && clip.shortcut(keys);
       }
+      if (slk.open()) {
+        const selecting = field && field.selectionStart !== field.selectionEnd;
+        return !selecting && slk.shortcut(keys);
+      }
       if (prefs.open()) {
         return false;
       }
@@ -1285,11 +1371,21 @@ export function App(props: {
         ? runOnAnswer((actions) => matching([...actions, ...conversationActions()]))
         : runOnRow(matching);
     },
-    ask: () => startAsking(query().trim()),
+    ask: () => {
+      if (isSlackApp(appAt(selected()))) {
+        openSlack();
+        return;
+      }
+      startAsking(query().trim());
+    },
     stop: () => asking.stop(),
     back: () => {
       if (clip.open()) {
         closeClipboard();
+        return;
+      }
+      if (slk.open()) {
+        closeSlack();
         return;
       }
       if (prefs.open()) {
@@ -1351,6 +1447,8 @@ export function App(props: {
     edge: (last: boolean) => {
       if (clip.open()) {
         clip.page(last ? clip.shown().length : -clip.shown().length);
+      } else if (slk.open()) {
+        slk.page(last ? slk.shown().length : -slk.shown().length);
       } else if (pullsShown()) {
         pulls.page(last ? pulls.shown().length : -pulls.shown().length);
       } else if (prefs.open()) {
@@ -1493,6 +1591,9 @@ export function App(props: {
     if (clip.open()) {
       return clip.shown().length > 0;
     }
+    if (slk.open()) {
+      return slk.gate() === null && slk.shown().length > 0;
+    }
     if (prefs.open()) {
       return prefs.rows().length > 0;
     }
@@ -1514,13 +1615,15 @@ export function App(props: {
   const screen = () =>
     clip.open()
       ? "clipboard"
-      : prefs.open()
-        ? "settings"
-        : pullsShown()
-          ? "pulls"
-          : answering()
-            ? "answer"
-            : "search";
+      : slk.open()
+        ? "slack"
+        : prefs.open()
+          ? "settings"
+          : pullsShown()
+            ? "pulls"
+            : answering()
+              ? "answer"
+              : "search";
 
   createEffect(
     on(
@@ -1560,6 +1663,7 @@ export function App(props: {
       settings: prefs.open(),
       clipboard: clip.open(),
       pulls: pullsShown(),
+      slack: slk.open(),
       vim: vimOn(),
       normal: normal(),
       waiting: waitingG(),
@@ -1598,6 +1702,8 @@ export function App(props: {
     frames.activity(performance.now());
     if (clip.open()) {
       clip.filter(query());
+    } else if (slk.open()) {
+      slk.filter(query());
     } else if (pullsShown()) {
       pulls.filter(query());
     } else if (prefs.open()) {
@@ -1658,6 +1764,9 @@ export function App(props: {
     askedFiles = "";
     if (clip.open()) {
       closeClipboard();
+    }
+    if (slk.open()) {
+      closeSlack();
     }
     if (prefs.open()) {
       closeSettings();
@@ -1800,6 +1909,9 @@ export function App(props: {
     if (clip.open()) {
       return clip.primary();
     }
+    if (slk.open()) {
+      return slk.primary();
+    }
     if (prefs.open()) {
       return prefs.primary();
     }
@@ -1820,13 +1932,17 @@ export function App(props: {
       placeholder={
         clip.open()
           ? CLIPBOARD_PLACEHOLDER
-          : pullsShown()
-            ? PULLS_PLACEHOLDER
-            : prefs.open()
-              ? SETTINGS_PLACEHOLDER
-              : answering()
-                ? FOLLOW_UP_PLACEHOLDER
-                : SEARCH_PLACEHOLDER
+          : slk.open()
+            ? slk.gate()
+              ? TOKEN_PLACEHOLDER
+              : SLACK_PLACEHOLDER
+            : pullsShown()
+              ? PULLS_PLACEHOLDER
+              : prefs.open()
+                ? SETTINGS_PLACEHOLDER
+                : answering()
+                  ? FOLLOW_UP_PLACEHOLDER
+                  : SEARCH_PLACEHOLDER
       }
       autocomplete="off"
       spellcheck={false}
@@ -1836,13 +1952,17 @@ export function App(props: {
       aria-label={
         clip.open()
           ? CLIPBOARD_PLACEHOLDER
-          : pullsShown()
-            ? PULLS_PLACEHOLDER
-            : prefs.open()
-              ? SETTINGS_PLACEHOLDER
-              : answering()
-                ? "Ask a follow-up"
-                : "Search"
+          : slk.open()
+            ? slk.gate()
+              ? TOKEN_PLACEHOLDER
+              : SLACK_PLACEHOLDER
+            : pullsShown()
+              ? PULLS_PLACEHOLDER
+              : prefs.open()
+                ? SETTINGS_PLACEHOLDER
+                : answering()
+                  ? "Ask a follow-up"
+                  : "Search"
       }
       onBeforeInput={() => {
         if (chatting() && field && editor.opened === undefined) {
@@ -1902,6 +2022,12 @@ export function App(props: {
               {CLIPBOARD_TITLE}
             </span>
           </Match>
+          <Match when={slk.open()}>
+            <span id="chip">
+              <SlackMark />
+              {SLACK_TITLE}
+            </span>
+          </Match>
           <Match when={prefs.open()}>
             <span id="chip">
               <Glyph name="gear" />
@@ -1941,11 +2067,21 @@ export function App(props: {
           {searchField}
         </span>
         <Show when={!answering() && !covered()}>
-          <span id="hint">
-            <kbd>Tab</kbd>
-            <Brand id={asking.chosenAccount().id} />
-            <span class="sr">asks {asking.chosenAccount().name}</span>
-          </span>
+          <Show
+            when={isSlackApp(appAt(selected()))}
+            fallback={
+              <span id="hint">
+                <kbd>Tab</kbd>
+                <Brand id={asking.chosenAccount().id} />
+                <span class="sr">asks {asking.chosenAccount().name}</span>
+              </span>
+            }
+          >
+            <span id="hint">
+              <kbd>Tab</kbd>
+              <span>Slack search</span>
+            </span>
+          </Show>
         </Show>
       </header>
       <Show when={prefs.open()}>
@@ -1953,6 +2089,9 @@ export function App(props: {
       </Show>
       <Show when={clip.open()}>
         <ClipboardList clipboard={clip} />
+      </Show>
+      <Show when={slk.open()}>
+        <SlackList slack={slk} />
       </Show>
       <Show when={pullsShown()}>
         <PullsList pulls={pulls} menuOpen={menu() !== null} onPick={pickPull} />
@@ -2293,6 +2432,7 @@ export function App(props: {
           </Show>
           <Switch>
             <Match when={clip.open()}>{clip.context()}</Match>
+            <Match when={slk.open()}>{slk.context()}</Match>
             <Match when={pullsShown()}>{pulls.context()}</Match>
             <Match when={prefs.open()}>{prefs.context()}</Match>
             <Match when={!answering() && searchNote()}>{searchNote()}</Match>

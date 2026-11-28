@@ -17,6 +17,7 @@ mod picks;
 mod pulls;
 mod settings;
 mod sizes;
+mod slack;
 mod spotlight;
 mod terminals;
 mod typeahead;
@@ -318,6 +319,8 @@ async fn apps(
         under: raiden_core::pulls::UNDER.to_owned(),
         accessory: pulls.accessory(),
     });
+    // Slack has no list row of its own: typing "slack" finds the real Slack.app,
+    // and Tab on it opens the search view (see SLACK_APP in the UI).
     Ok(picks::listing(apps, &usage.0))
 }
 
@@ -408,6 +411,7 @@ fn launch(rows: Option<usize>, development: bool) {
         .manage(clipboard::History::new(&folders(development).1))
         .manage(files::Files::start())
         .manage(pulls::Pulls::new(&folders(development).1))
+        .manage(slack::Slack::new())
         .manage(sizes::Sizes::new(&folders(development).1))
         .on_web_content_process_terminate(crashes::reload)
         .plugin(tauri_nspanel::init())
@@ -476,6 +480,12 @@ fn launch(rows: Option<usize>, development: bool) {
             pulls::pull_requests_avatar,
             pulls::pull_requests_pin,
             pulls::pull_requests_context,
+            slack::slack_manifest,
+            slack::slack_has_token,
+            slack::slack_search,
+            slack::slack_save_token,
+            slack::slack_sign_out,
+            slack::slack_open,
             sizes::window_size,
             sizes::expand_window
         ])
