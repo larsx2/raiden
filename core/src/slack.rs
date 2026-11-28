@@ -446,6 +446,26 @@ mod tests {
     }
 
     #[test]
+    fn the_exact_name_beats_unreads_and_a_typed_hash_or_case_does_not_matter() {
+        let busy = hit(9, true, 999, "#ifa-alerts");
+        let ranked = rank(vec![busy, hit(0, false, 0, "#IFA")], " #ifa ");
+        assert_eq!(ranked[0].title, "#IFA");
+        // Nothing typed: no name wins, so unreads lead.
+        let ranked = rank(vec![hit(0, false, 0, "#a"), hit(1, false, 0, "#b")], "");
+        assert_eq!(ranked[0].title, "#b");
+    }
+
+    #[test]
+    fn a_conversation_you_never_wrote_in_keeps_its_own_time() {
+        let latest = last_written(&json!({"ok": false}));
+        assert!(latest.is_empty());
+        let mut kept = hit(0, false, 500, "kept");
+        kept.id = "C9".to_owned();
+        let older = std::collections::HashMap::from([("C9".to_owned(), 100)]);
+        assert_eq!(with_recency(vec![kept], &older)[0].updated, 500);
+    }
+
+    #[test]
     fn with_nothing_typed_your_latest_conversations_come_first() {
         let reply = json!({"messages": {"matches": [
             {"ts": "1700000300.000100", "channel": {"id": "C2"}},
